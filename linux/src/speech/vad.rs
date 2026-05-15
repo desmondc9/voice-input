@@ -20,8 +20,9 @@ const MAX_SEGMENT_SAMPLES: usize = 30 * VAD_SAMPLE_RATE as usize;
 /// Speech probability threshold. Silero outputs 0.0–1.0; >0.5 = speech.
 const SPEECH_THRESHOLD: f32 = 0.5;
 
-/// Streaming VAD slicer. Feed samples via `push`; complete segments are
-/// returned by `drain` (call after every push to retrieve any closed slice).
+/// Streaming VAD slicer. Feed samples via `push`; the call itself returns
+/// any segments that closed during this batch. On shutdown, call `flush`
+/// to retrieve any in-progress segment.
 pub struct VadSlicer {
     vad: VoiceActivityDetector,
     /// Samples buffered for the next VAD window inference.
@@ -58,19 +59,27 @@ impl VadSlicer {
             if self.window_buf.len() >= VAD_WINDOW {
                 let prob = self.vad.predict(self.window_buf.iter().copied());
                 let is_speech = prob >= SPEECH_THRESHOLD;
-                self.segment.extend_from_slice(&self.window_buf);
-                self.window_buf.clear();
 
                 if is_speech {
                     self.in_segment = true;
                     self.silence_count = 0;
-                } else if self.in_segment {
-                    self.silence_count += 1;
                 }
 
-                let should_close = (self.in_segment
-                    && self.silence_count >= SILENCE_WINDOWS_TO_CLOSE)
-                    || self.segment.len() >= MAX_SEGMENT_SAMPLES;
+                // Only accumulate into the segment buffer once we're inside
+                // a speech segment. Pre-speech silence is discarded so that
+                // long stretches without any detected speech don't grow the
+                // segment to MAX_SEGMENT_SAMPLES.
+                if self.in_segment {
+                    self.segment.extend_from_slice(&self.window_buf);
+                    if !is_speech {
+                        self.silence_count += 1;
+                    }
+                }
+                self.window_buf.clear();
+
+                let should_close = self.in_segment
+                    && (self.silence_count >= SILENCE_WINDOWS_TO_CLOSE
+                        || self.segment.len() >= MAX_SEGMENT_SAMPLES);
                 if should_close {
                     completed.push(std::mem::take(&mut self.segment));
                     self.segment.reserve(MAX_SEGMENT_SAMPLES);
@@ -127,5 +136,20 @@ mod tests {
     fn flush_returns_none_when_idle() {
         let mut v = VadSlicer::new().unwrap();
         assert!(v.flush().is_none());
+    }
+
+    #[test]
+    fn long_silence_beyond_max_segment_yields_no_segments() {
+        // Regression test: pre-fix, 30+ seconds of pure silence would trigger
+        // MAX_SEGMENT_SAMPLES closure and emit a silent segment to whisper.
+        let mut v = VadSlicer::new().unwrap();
+        let silence = samples_for(35_000, false);
+        let segments = v.push(&silence).unwrap();
+        assert!(
+            segments.is_empty(),
+            "pure silence over MAX_SEGMENT_SAMPLES should emit no segments, got {}",
+            segments.len()
+        );
+        assert!(v.flush().is_none(), "flush should also return None after pure silence");
     }
 }
