@@ -5,11 +5,13 @@ fn write_then_read_yields_same_config() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("config.toml");
 
-    let mut original = Config::default();
-    original.language_hint = "ja".into();
-    original.llm_enabled = true;
-    original.llm_api_key = "sk-test-12345".into();
-    original.shortcut_handle = Some("portal-handle-abc".into());
+    let original = Config {
+        language_hint: "ja".into(),
+        llm_enabled: true,
+        llm_api_key: "sk-test-12345".into(),
+        shortcut_handle: Some("portal-handle-abc".into()),
+        ..Default::default()
+    };
 
     original.save_to(&path).expect("save");
     let loaded = Config::load_from(&path).expect("load");
