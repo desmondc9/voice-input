@@ -124,6 +124,76 @@ where
         .map_err(|e| AppError::NoMicrophone(format!("build_input_stream: {}", e)))
 }
 
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
+
+pub const WHISPER_SAMPLE_RATE: u32 = 16_000;
+
+/// Downmix to mono by averaging interleaved channels, then resample to
+/// `WHISPER_SAMPLE_RATE` (16 kHz) using a high-quality sinc interpolator.
+///
+/// Returns the resampled mono f32 samples ready for VAD / whisper.
+pub struct Resampler16kMono {
+    resampler: SincFixedIn<f32>,
+    src_channels: usize,
+    /// Carries leftover unprocessed mono samples between calls.
+    mono_buf: Vec<f32>,
+    chunk_size: usize,
+}
+
+impl Resampler16kMono {
+    pub fn new(input_rate: u32, channels: u16) -> AppResult<Self> {
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: 0.95,
+            interpolation: SincInterpolationType::Linear,
+            oversampling_factor: 256,
+            window: WindowFunction::BlackmanHarris2,
+        };
+        let chunk_size = 1024_usize;
+        let resampler = SincFixedIn::<f32>::new(
+            WHISPER_SAMPLE_RATE as f64 / input_rate as f64,
+            2.0,
+            params,
+            chunk_size,
+            1, // mono output
+        )
+        .map_err(|e| AppError::Config(format!("resampler init: {}", e)))?;
+
+        Ok(Self {
+            resampler,
+            src_channels: channels as usize,
+            mono_buf: Vec::with_capacity(chunk_size * 4),
+            chunk_size,
+        })
+    }
+
+    /// Process an interleaved multi-channel buffer at the input rate.
+    /// Returns 16 kHz mono samples; may return fewer than expected if
+    /// not enough samples have accumulated for a full resampler chunk.
+    pub fn process(&mut self, interleaved: &[f32]) -> AppResult<Vec<f32>> {
+        // Downmix to mono by averaging channels
+        let frames = interleaved.len() / self.src_channels;
+        self.mono_buf.reserve(frames);
+        for frame in interleaved.chunks_exact(self.src_channels) {
+            let avg = frame.iter().sum::<f32>() / self.src_channels as f32;
+            self.mono_buf.push(avg);
+        }
+
+        let mut output = Vec::new();
+        while self.mono_buf.len() >= self.chunk_size {
+            let chunk: Vec<f32> = self.mono_buf.drain(..self.chunk_size).collect();
+            let resampled = self
+                .resampler
+                .process(&[chunk], None)
+                .map_err(|e| AppError::Config(format!("resample: {}", e)))?;
+            output.extend_from_slice(&resampled[0]);
+        }
+        Ok(output)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +225,40 @@ mod tests {
         let quiet: Vec<f32> = (0..1024).map(|i| ((i as f32 * 0.1).sin()) * 0.001).collect();
         let level = rms_normalized(&quiet);
         assert!(level >= 0.0 && level < 0.2, "expected low range, got {}", level);
+    }
+
+    #[test]
+    fn resampler_48k_stereo_to_16k_mono_passes_through() {
+        let mut r = Resampler16kMono::new(48_000, 2).unwrap();
+        // 4800 stereo frames = 100ms at 48kHz
+        let interleaved: Vec<f32> = (0..4800)
+            .flat_map(|i| {
+                let s = (i as f32 * 0.01).sin();
+                vec![s, s] // identical left & right
+            })
+            .collect();
+        let out = r.process(&interleaved).unwrap();
+        // Roughly 100ms at 16kHz = ~1600 samples — allow some slack for the resampler's internal buffering
+        assert!(
+            out.len() > 1000 && out.len() < 2000,
+            "expected ~1600 output samples, got {}",
+            out.len()
+        );
+        // Output is mono — values should be similar magnitude to input (sin range)
+        let max = out.iter().fold(0.0_f32, |a, &b| a.max(b.abs()));
+        assert!(max > 0.5 && max < 1.5, "max amplitude unexpected: {}", max);
+    }
+
+    #[test]
+    fn resampler_44_1k_mono_at_correct_target_rate() {
+        let mut r = Resampler16kMono::new(44_100, 1).unwrap();
+        let mono: Vec<f32> = (0..22_050).map(|i| (i as f32 * 0.02).sin()).collect(); // ~500ms
+        let out = r.process(&mono).unwrap();
+        // ~500ms at 16kHz = ~8000 samples; allow ±15% for buffering
+        assert!(
+            out.len() > 6_500 && out.len() < 9_500,
+            "expected ~8000 samples, got {}",
+            out.len()
+        );
     }
 }
