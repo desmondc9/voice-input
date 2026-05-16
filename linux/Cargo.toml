@@ -19,8 +19,10 @@ futures-util = "0.3"
 gtk4 = { version = "0.10", features = ["v4_12"] }
 gtk4-layer-shell = "0.6"
 ksni = { version = "0.3", features = ["tokio"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 rubato = "0.16"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "signal"] }
 toml = "0.8"
@@ -32,6 +34,7 @@ wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
 tempfile = "3"
+wiremock = "0.6"
 
 [[bin]]
 name = "voice-input"
