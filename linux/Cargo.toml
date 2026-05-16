@@ -16,6 +16,8 @@ crossbeam-channel = "0.5"
 ctrlc = "3"
 directories = "5"
 futures-util = "0.3"
+gtk4 = { version = "0.10", features = ["v4_12"] }
+gtk4-layer-shell = "0.6"
 ksni = { version = "0.3", features = ["tokio"] }
 rubato = "0.16"
 serde = { version = "1", features = ["derive"] }
