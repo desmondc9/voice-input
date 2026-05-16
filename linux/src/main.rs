@@ -251,6 +251,8 @@ async fn run_listen_async(
     let mut current_pipeline: Option<speech::PipelineHandle> = None;
     let mut current_capture: Option<voice_input::audio::Capture> = None;
     let language_hint = cfg.language_hint.clone();
+    let refiner = voice_input::refiner::LlmRefiner::from_config(&cfg);
+    tracing::info!(active = refiner.is_active(), "llm refiner initialized");
 
     // RMS level fan-out: vad-resample thread → blocking task → overlay channel.
     // We use a bounded crossbeam channel sized for ~1s of audio at 100Hz.
@@ -292,19 +294,28 @@ async fn run_listen_async(
             Some(_deactivated) = deactivated.next() => {
                 if let Some(pipeline) = current_pipeline.take() {
                     tracing::info!("shortcut released; draining and pasting");
-                    let _ = overlay_tx.send(OverlayCmd::SetText("Refining…".into()));
                     drop(current_capture.take());
                     let segments = tokio::task::spawn_blocking(move || pipeline.join_remaining())
                         .await
                         .context("draining pipeline")?;
-                    let joined = segments.join(" ").trim().to_string();
-                    if joined.is_empty() {
+                    let raw_joined = segments.join(" ").trim().to_string();
+                    if raw_joined.is_empty() {
                         tracing::info!("no segments transcribed; skipping paste");
                     } else {
-                        tracing::info!(segments = segments.len(), bytes = joined.len(), "pasting");
+                        // Refine before paste. The refiner short-circuits when
+                        // disabled/unconfigured; on errors it logs and returns the
+                        // raw text — paste must not fail because the LLM is down.
+                        let _ = overlay_tx.send(OverlayCmd::SetText("Refining…".into()));
+                        let to_paste = refiner.refine(&raw_joined, false).await;
+                        tracing::info!(
+                            segments = segments.len(),
+                            raw_bytes = raw_joined.len(),
+                            final_bytes = to_paste.len(),
+                            "pasting"
+                        );
                         let injected = tokio::task::spawn_blocking({
-                            let joined = joined.clone();
-                            move || voice_input::injector::inject_text(&joined)
+                            let to_paste = to_paste.clone();
+                            move || voice_input::injector::inject_text(&to_paste)
                         })
                         .await
                         .context("ydotool paste task")?;
