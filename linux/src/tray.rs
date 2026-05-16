@@ -63,6 +63,7 @@ impl Tray for VoiceInputTray {
             }
             .into(),
             language_menu(&snap.language_hint),
+            llm_menu(snap.llm_enabled),
             MenuItem::Separator,
             StandardItem {
                 label: "Quit".into(),
@@ -120,6 +121,43 @@ fn language_menu(current: &str) -> MenuItem<VoiceInputTray> {
 
     ksni::menu::SubMenu {
         label: "Language".into(),
+        submenu,
+        ..Default::default()
+    }
+    .into()
+}
+
+
+fn llm_menu(llm_enabled: bool) -> MenuItem<VoiceInputTray> {
+    let submenu: Vec<MenuItem<VoiceInputTray>> = vec![
+        CheckmarkItem {
+            label: "Enabled".into(),
+            checked: llm_enabled,
+            activate: Box::new(|this: &mut VoiceInputTray| {
+                let new_value = !this.state.snapshot().llm_enabled;
+                if let Err(e) = this.state.update(|cfg| cfg.llm_enabled = new_value) {
+                    tracing::error!(error = %e, "tray: failed to persist LLM enabled");
+                } else {
+                    tracing::info!(llm_enabled = new_value, "tray: LLM toggled");
+                }
+            }),
+            ..Default::default()
+        }
+        .into(),
+        MenuItem::Separator,
+        StandardItem {
+            label: "Settings…".into(),
+            activate: Box::new(|this: &mut VoiceInputTray| {
+                tracing::info!("tray: Settings… requested");
+                let _ = this.ui_tx.send(UiCmd::OpenSettings);
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ];
+
+    ksni::menu::SubMenu {
+        label: "LLM Refinement".into(),
         submenu,
         ..Default::default()
     }
