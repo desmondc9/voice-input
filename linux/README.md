@@ -2,7 +2,9 @@
 
 Wayland-native voice input for KDE Plasma 6, sway, and hyprland. Hold a configured key, speak, release — the transcript is pasted into the focused application.
 
-> Status: **Phase 2** — hotkey-driven dictation works end-to-end via the XDG portal + ydotool. Tray mode (default invocation) and transcribe CLI mode (Phase 1) both still work.
+> Status: **Phase 3** — overlay capsule with live waveform appears during dictation. Tray (default), transcribe CLI (Phase 1), and listen mode (Phase 2) all still work.
+
+> **Phase 3 GNOME note**: the overlay uses `wlr-layer-shell`, which GNOME's mutter does NOT implement. `voice-input listen` will fail to position the capsule correctly on GNOME — explicitly out of scope.
 
 ## Build
 
@@ -72,6 +74,15 @@ First run: the XDG portal prompts you to bind a global shortcut. Recommended: **
 Then: focus any text input, hold the configured key, speak, release. The transcript is pasted into the focused field. Press Ctrl+C in the terminal to stop the daemon.
 
 Requires the steps in "Install ydotool" above.
+
+### Overlay capsule (Phase 3)
+
+When you hold the configured shortcut, a small dark capsule appears at the bottom-center of your screen with an animated 5-bar waveform that tracks your speaking volume. When you release, the capsule briefly shows "Refining…" then disappears as the text is pasted.
+
+Requires `wlr-layer-shell` support in your compositor:
+- **KDE Plasma 6**: works (KWin 6+ supports it).
+- **sway / hyprland**: works.
+- **GNOME**: not supported — mutter does not implement layer-shell.
 
 ## Compositor support
 
