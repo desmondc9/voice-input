@@ -62,6 +62,7 @@ impl Tray for VoiceInputTray {
                 ..Default::default()
             }
             .into(),
+            language_menu(&snap.language_hint),
             MenuItem::Separator,
             StandardItem {
                 label: "Quit".into(),
@@ -76,4 +77,51 @@ impl Tray for VoiceInputTray {
             .into(),
         ]
     }
+}
+
+
+/// Whisper language codes shown in the tray. Empty string = auto-detect.
+/// Native-script labels match macOS AppDelegate.swift:190-197 adapted
+/// from BCP-47 to ISO 639-1 (whisper.cpp's format).
+const LANGUAGES: &[(&str, &str)] = &[
+    ("Auto-detect", ""),
+    ("English", "en"),
+    ("中文", "zh"),
+    ("日本語", "ja"),
+    ("한국어", "ko"),
+    ("Español", "es"),
+];
+
+fn language_menu(current: &str) -> MenuItem<VoiceInputTray> {
+    let submenu: Vec<MenuItem<VoiceInputTray>> = LANGUAGES
+        .iter()
+        .map(|(label, code)| {
+            let code = (*code).to_string();
+            let label = (*label).to_string();
+            let checked = current == code;
+            CheckmarkItem {
+                label,
+                checked,
+                activate: Box::new(move |this: &mut VoiceInputTray| {
+                    let code_clone = code.clone();
+                    if let Err(e) =
+                        this.state.update(|cfg| cfg.language_hint = code_clone.clone())
+                    {
+                        tracing::error!(error = %e, "tray: failed to persist language");
+                    } else {
+                        tracing::info!(language = %code, "tray: language changed");
+                    }
+                }),
+                ..Default::default()
+            }
+            .into()
+        })
+        .collect();
+
+    ksni::menu::SubMenu {
+        label: "Language".into(),
+        submenu,
+        ..Default::default()
+    }
+    .into()
 }
