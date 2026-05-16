@@ -124,10 +124,19 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
 
     // Backend ↔ GTK channel.
     let (overlay_tx, overlay_rx) = overlay::channel();
+    // Cloned for the Ctrl+C handler so it can ask the GTK main loop to quit.
+    let overlay_tx_for_signal = overlay_tx.clone();
+
+    // Shutdown signal: shared between the main thread (which installs a
+    // Ctrl+C handler and also notifies after GTK exits) and the backend
+    // (which waits on it via tokio::select!). GTK's own SIGINT handler
+    // would otherwise swallow the signal before tokio sees it.
+    let shutdown = Arc::new(Notify::new());
 
     // Spawn the backend thread (owns tokio runtime + ashpd portal + pipeline).
     let cfg_for_backend = cfg.clone();
     let model_path_for_backend = model_path.clone();
+    let shutdown_for_backend = shutdown.clone();
     let backend = std::thread::Builder::new()
         .name("voice-input-backend".into())
         .spawn(move || {
@@ -139,6 +148,7 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
                 cfg_for_backend,
                 model_path_for_backend,
                 overlay_tx,
+                shutdown_for_backend,
             )) {
                 tracing::error!(error = %e, "backend exited with error");
             }
@@ -190,15 +200,29 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
         );
     });
 
+    // Cross-thread Ctrl+C handler: notify the backend and ask the GTK main
+    // loop to quit via OverlayCmd::Quit (the polling closure on the main
+    // thread calls app.quit() — we can't capture `Application` here because
+    // it's !Send). g_application also installs its own SIGINT handler inside
+    // app.run_*; whichever handler ultimately fires, the post-run
+    // notify_waiters below is a belt-and-suspenders that guarantees the
+    // backend winds down too.
+    let shutdown_for_signal = shutdown.clone();
+    let _ = ctrlc::set_handler(move || {
+        shutdown_for_signal.notify_waiters();
+        let _ = overlay_tx_for_signal.send(OverlayCmd::Quit);
+    });
+
     // GApplication argv parsing tries to treat our clap subcommand (`listen`)
     // as a file path and emits a GLib-GIO CRITICAL when HANDLES_OPEN isn't
     // set, which also suppresses the `activate` signal. Pass empty args so
     // GApplication just calls `activate` and we control its lifecycle.
     let exit_code = app.run_with_args::<&str>(&[]);
 
-    // Tell the backend we're shutting down by closing the channel.
-    // The backend's tokio::select! has a ctrl_c arm; once the user
-    // SIGINTs, both halves wind down.
+    // GTK exited (Ctrl+C handled by GLib, or our handler called app.quit, or
+    // some normal exit path). Notify the backend so it stops waiting on
+    // portal events, then join it.
+    shutdown.notify_waiters();
     let _ = backend.join();
 
     if exit_code.get() != 0 {
@@ -211,6 +235,7 @@ async fn run_listen_async(
     cfg: Config,
     model_path: std::path::PathBuf,
     overlay_tx: overlay::OverlaySender,
+    shutdown: Arc<Notify>,
 ) -> anyhow::Result<()> {
     use futures_util::stream::StreamExt;
     use voice_input::hotkey::HotkeyHandle;
@@ -246,8 +271,8 @@ async fn run_listen_async(
     loop {
         tokio::select! {
             biased;
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("SIGINT received; exiting listen mode");
+            _ = shutdown.notified() => {
+                tracing::info!("shutdown signaled; exiting listen mode");
                 break;
             }
             Some(_activated) = activated.next() => {
