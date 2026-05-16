@@ -16,19 +16,33 @@ use crossbeam_channel::{bounded, Receiver};
 use crate::audio::{AudioChunk, Capture, Resampler16kMono};
 use crate::error::{AppError, AppResult};
 
-/// Handle returned by `start_pipeline`. Drop to begin teardown; call
-/// `join` to wait for clean shutdown of all worker threads.
+/// Handle returned by `start_pipeline`. Call `join` to perform clean
+/// shutdown (closes the audio stream first, then waits for the worker
+/// threads). Simply dropping the handle also shuts down — the `Capture`
+/// stops on drop and the worker threads will exit when their input
+/// channels close.
 pub struct PipelineHandle {
     pub text_rx: Receiver<String>,
-    _capture: Capture,
+    /// Wrapped in `Option` so `join` can drop the audio stream BEFORE
+    /// awaiting the VAD thread. Without this, the VAD thread would block
+    /// on `audio_rx.recv()` forever because `audio_tx` lives inside the
+    /// cpal stream owned by `Capture`.
+    capture: Option<Capture>,
     vad_handle: Option<JoinHandle<()>>,
     whisper_handle: Option<JoinHandle<()>>,
 }
 
 impl PipelineHandle {
-    /// Wait for the VAD and whisper workers to finish. Call after dropping
-    /// or otherwise closing the slice/text channels.
+    /// Perform an orderly shutdown:
+    /// 1. Drop the audio capture so the cpal stream stops and the
+    ///    `audio_tx` Sender is released, allowing the VAD thread's
+    ///    `audio_rx.recv()` to return Err.
+    /// 2. Join the VAD thread (now able to exit).
+    /// 3. The VAD thread, on exit, drops `slice_tx`, which lets the
+    ///    whisper worker's `slices_rx.recv()` return Err.
+    /// 4. Join the whisper worker thread.
     pub fn join(mut self) {
+        drop(self.capture.take());
         if let Some(h) = self.vad_handle.take() {
             let _ = h.join();
         }
@@ -60,7 +74,7 @@ pub fn start_pipeline(model_path: &Path, language_hint: String) -> AppResult<Pip
 
     Ok(PipelineHandle {
         text_rx,
-        _capture: capture,
+        capture: Some(capture),
         vad_handle: Some(vad_handle),
         whisper_handle: Some(whisper_handle),
     })
