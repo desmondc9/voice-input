@@ -80,14 +80,13 @@ impl LlmRefiner {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::AppError::NetworkError(format!("llm refine send: {}", e))
-            })?;
+            .map_err(|e| crate::error::AppError::NetworkError(format!("llm refine send: {}", e)))?;
 
         let status = resp.status();
-        let raw = resp.text().await.map_err(|e| {
-            crate::error::AppError::NetworkError(format!("llm refine body: {}", e))
-        })?;
+        let raw = resp
+            .text()
+            .await
+            .map_err(|e| crate::error::AppError::NetworkError(format!("llm refine body: {}", e)))?;
 
         if !status.is_success() {
             return Err(crate::error::AppError::NetworkError(format!(
@@ -97,10 +96,7 @@ impl LlmRefiner {
         }
 
         let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
-            crate::error::AppError::NetworkError(format!(
-                "llm refine parse: {} body={}",
-                e, raw
-            ))
+            crate::error::AppError::NetworkError(format!("llm refine parse: {} body={}", e, raw))
         })?;
 
         let content = json
@@ -143,7 +139,11 @@ impl LlmRefiner {
     /// (not `cfg(test)`-gated) because `tests/` integration tests live
     /// in a separate crate and can't see `#[cfg(test)]` items.
     #[doc(hidden)]
-    pub fn for_test(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
+    pub fn for_test(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -186,18 +186,26 @@ mod tests {
 
     #[test]
     fn is_active_requires_both_enabled_and_api_key() {
-        let mut cfg = Config::default();
-        cfg.llm_enabled = true;
-        cfg.llm_api_key = String::new();
-        assert!(!LlmRefiner::from_config(&cfg).is_active(),
-            "enabled but no api key → inactive");
+        let mut cfg = Config {
+            llm_enabled: true,
+            ..Config::default()
+        };
+        // api_key is already empty by default → still inactive
+        assert!(
+            !LlmRefiner::from_config(&cfg).is_active(),
+            "enabled but no api key → inactive"
+        );
 
         cfg.llm_api_key = "sk-test".into();
-        assert!(LlmRefiner::from_config(&cfg).is_active(),
-            "both set → active");
+        assert!(
+            LlmRefiner::from_config(&cfg).is_active(),
+            "both set → active"
+        );
 
         cfg.llm_enabled = false;
-        assert!(!LlmRefiner::from_config(&cfg).is_active(),
-            "disabled even with api key → inactive");
+        assert!(
+            !LlmRefiner::from_config(&cfg).is_active(),
+            "disabled even with api key → inactive"
+        );
     }
 }
