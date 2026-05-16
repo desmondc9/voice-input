@@ -24,7 +24,7 @@ impl LlmRefiner {
     /// built with a 10 s total timeout — matches macOS `URLRequest.timeoutInterval = 10`.
     pub fn from_config(cfg: &Config) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(cfg.llm_timeout_secs))
             .build()
             .expect("reqwest client build with rustls features");
 

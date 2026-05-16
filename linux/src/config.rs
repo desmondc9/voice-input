@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub language_hint: String,
     pub llm_enabled: bool,
@@ -13,6 +14,10 @@ pub struct Config {
     pub llm_model: String,
     pub whisper_model_size: String,
     pub whisper_model_path: Option<PathBuf>,
+    /// HTTP timeout for the LLM refiner request, in seconds. Default 30 —
+    /// generous enough to accommodate a local Ollama cold-start; cloud
+    /// providers complete in ~1 s so the longer timeout is invisible.
+    pub llm_timeout_secs: u64,
 }
 
 impl Default for Config {
@@ -25,6 +30,7 @@ impl Default for Config {
             llm_model: "gpt-4o-mini".to_string(),
             whisper_model_size: "small".to_string(),
             whisper_model_path: None,
+            llm_timeout_secs: 30,
         }
     }
 }
@@ -97,6 +103,31 @@ mod tests {
         assert!(!cfg.llm_enabled);
         assert_eq!(cfg.whisper_model_size, "small");
         assert!(cfg.whisper_model_path.is_none());
+        assert_eq!(
+            cfg.llm_timeout_secs, 30,
+            "30s default accommodates local Ollama cold-start"
+        );
+    }
+
+    #[test]
+    fn missing_timeout_field_falls_back_to_default() {
+        // Old config files (pre-Phase 4 timeout field) must continue to load.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.toml");
+        std::fs::write(
+            &path,
+            r#"
+language_hint = "zh"
+llm_enabled = false
+llm_api_base_url = "https://api.openai.com/v1"
+llm_api_key = ""
+llm_model = "gpt-4o-mini"
+whisper_model_size = "small"
+"#,
+        )
+        .unwrap();
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(cfg.llm_timeout_secs, 30);
     }
 
     #[test]
