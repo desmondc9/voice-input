@@ -62,7 +62,9 @@ async fn run_tray_async() -> anyhow::Result<()> {
 }
 
 fn run_transcribe(cfg: Config) -> anyhow::Result<()> {
-    let model_path = cfg.resolve_model_path().context("resolving whisper model path")?;
+    let model_path = cfg
+        .resolve_model_path()
+        .context("resolving whisper model path")?;
     tracing::info!(model = %model_path.display(), "starting transcribe pipeline");
 
     let pipeline = voice_input::speech::start_pipeline(&model_path, cfg.language_hint.clone())
@@ -100,6 +102,9 @@ fn run_transcribe(cfg: Config) -> anyhow::Result<()> {
     }
 
     pipeline.join();
-    tracing::info!("pipeline shutdown complete; transcribed {} segments", segment_count);
+    tracing::info!(
+        "pipeline shutdown complete; transcribed {} segments",
+        segment_count
+    );
     Ok(())
 }

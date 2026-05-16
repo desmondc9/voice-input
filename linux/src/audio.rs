@@ -222,9 +222,15 @@ mod tests {
 
     #[test]
     fn quiet_noise_maps_to_low_range() {
-        let quiet: Vec<f32> = (0..1024).map(|i| ((i as f32 * 0.1).sin()) * 0.001).collect();
+        let quiet: Vec<f32> = (0..1024)
+            .map(|i| ((i as f32 * 0.1).sin()) * 0.001)
+            .collect();
         let level = rms_normalized(&quiet);
-        assert!(level >= 0.0 && level < 0.2, "expected low range, got {}", level);
+        assert!(
+            level >= 0.0 && level < 0.2,
+            "expected low range, got {}",
+            level
+        );
     }
 
     #[test]

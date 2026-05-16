@@ -8,9 +8,15 @@ use crate::error::ErrorKind;
 pub enum AppState {
     #[default]
     Idle,
-    Listening { started_at: Instant },
-    Refining { raw_text: String },
-    Injecting { final_text: String },
+    Listening {
+        started_at: Instant,
+    },
+    Refining {
+        raw_text: String,
+    },
+    Injecting {
+        final_text: String,
+    },
     Error(ErrorKind),
 }
 

@@ -1,4 +1,4 @@
-use voice_input::speech::vad::{VAD_SAMPLE_RATE, VadSlicer};
+use voice_input::speech::vad::{VadSlicer, VAD_SAMPLE_RATE};
 
 /// Generate a real-ish speech waveform: superimposed harmonics with envelope.
 /// Silero is trained on actual speech; a pure sine won't reliably trigger

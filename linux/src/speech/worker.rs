@@ -25,8 +25,11 @@ pub fn spawn(
     }
     let model_path_string = model_path.to_string_lossy().into_owned();
 
-    let ctx = WhisperContext::new_with_params(&model_path_string, WhisperContextParameters::default())
-        .map_err(|e| AppError::WhisperFailed(format!("load model {}: {}", model_path_string, e)))?;
+    let ctx =
+        WhisperContext::new_with_params(&model_path_string, WhisperContextParameters::default())
+            .map_err(|e| {
+                AppError::WhisperFailed(format!("load model {}: {}", model_path_string, e))
+            })?;
 
     let handle = thread::Builder::new()
         .name("whisper-worker".into())
@@ -109,7 +112,9 @@ mod tests {
         let path = PathBuf::from("/nonexistent/ggml-tiny.bin");
         let err = spawn(&path, "zh".into(), slices_rx, text_tx).unwrap_err();
         match err {
-            AppError::ModelMissing { path: p } => assert!(p.to_string_lossy().contains("nonexistent")),
+            AppError::ModelMissing { path: p } => {
+                assert!(p.to_string_lossy().contains("nonexistent"))
+            }
             other => panic!("expected ModelMissing, got {:?}", other),
         }
     }

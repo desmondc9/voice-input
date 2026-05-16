@@ -112,7 +112,10 @@ mod tests {
         let n = duration_ms * VAD_SAMPLE_RATE as usize / 1000;
         if is_speech {
             (0..n)
-                .map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / VAD_SAMPLE_RATE as f32).sin() * 0.5)
+                .map(|i| {
+                    (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / VAD_SAMPLE_RATE as f32).sin()
+                        * 0.5
+                })
                 .collect()
         } else {
             vec![0.0; n]
@@ -150,6 +153,9 @@ mod tests {
             "pure silence over MAX_SEGMENT_SAMPLES should emit no segments, got {}",
             segments.len()
         );
-        assert!(v.flush().is_none(), "flush should also return None after pure silence");
+        assert!(
+            v.flush().is_none(),
+            "flush should also return None after pure silence"
+        );
     }
 }
