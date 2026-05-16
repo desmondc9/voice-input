@@ -1,16 +1,12 @@
-use std::sync::Arc;
 
 use anyhow::Context;
 use clap::Parser;
 use gtk4::prelude::*;
 use gtk4::Application;
-use ksni::TrayMethods;
-use tokio::sync::Notify;
 use voice_input::{
     cli::{Cli, Command},
     config::Config,
     overlay::{self, UiCmd, OverlayWindow},
-    tray::VoiceInputTray,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -32,39 +28,9 @@ fn main() -> anyhow::Result<()> {
     );
 
     match cli.command {
-        None => run_tray(cfg),
+        None | Some(Command::Listen) => run_app(cfg),
         Some(Command::Transcribe) => run_transcribe(cfg),
-        Some(Command::Listen) => run_listen(cfg),
     }
-}
-
-fn run_tray(_cfg: Config) -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("building tokio runtime")?;
-
-    runtime.block_on(async { run_tray_async().await })
-}
-
-async fn run_tray_async() -> anyhow::Result<()> {
-    // Interim: superseded by run_app in Task 5.9. Constructs a synthetic
-    // AppState from Config::default() (no listen loop reads it here) and a
-    // detached UiSender (no GTK receiver in standalone tray mode).
-    let state = voice_input::state::AppState::new(Config::default());
-    let (ui_tx, _ui_rx) = voice_input::overlay::channel();
-    let tray = VoiceInputTray::new(state.clone(), ui_tx);
-    let _tray_handle = tray.spawn().await.context("spawning tray")?;
-
-    tracing::info!("voice-input tray running — Quit via tray or Ctrl+C");
-
-    tokio::select! {
-        _ = state.shutdown.notified() => tracing::info!("tray Quit received"),
-        _ = tokio::signal::ctrl_c() => tracing::info!("SIGINT received"),
-    }
-
-    tracing::info!("shutdown complete");
-    Ok(())
 }
 
 fn run_transcribe(cfg: Config) -> anyhow::Result<()> {
@@ -117,30 +83,26 @@ fn run_transcribe(cfg: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_listen(cfg: Config) -> anyhow::Result<()> {
+fn run_app(cfg: Config) -> anyhow::Result<()> {
     let model_path = cfg
         .resolve_model_path()
         .context("resolving whisper model path")?;
-    tracing::info!(model = %model_path.display(), "starting listen mode");
+    tracing::info!(model = %model_path.display(), "starting app (tray + listen + overlay)");
 
     voice_input::injector::verify_available()
         .context("ydotool must be installed and ydotoold running")?;
 
+    // Shared state across tray + listen loop + Settings dialog.
+    let state = voice_input::state::AppState::new(cfg);
+
     // Backend ↔ GTK channel.
-    let (overlay_tx, overlay_rx) = overlay::channel();
-    // Cloned for the Ctrl+C handler so it can ask the GTK main loop to quit.
-    let overlay_tx_for_signal = overlay_tx.clone();
+    let (ui_tx, ui_rx) = overlay::channel();
+    let ui_tx_for_signal = ui_tx.clone();
 
-    // Shutdown signal: shared between the main thread (which installs a
-    // Ctrl+C handler and also notifies after GTK exits) and the backend
-    // (which waits on it via tokio::select!). GTK's own SIGINT handler
-    // would otherwise swallow the signal before tokio sees it.
-    let shutdown = Arc::new(Notify::new());
-
-    // Spawn the backend thread (owns tokio runtime + ashpd portal + pipeline).
-    let cfg_for_backend = cfg.clone();
+    // Spawn the backend thread (tokio: tray + portal + pipeline + LLM).
     let model_path_for_backend = model_path.clone();
-    let shutdown_for_backend = shutdown.clone();
+    let state_for_backend = state.clone();
+    let ui_tx_for_backend = ui_tx.clone();
     let backend = std::thread::Builder::new()
         .name("voice-input-backend".into())
         .spawn(move || {
@@ -148,36 +110,40 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
                 .enable_all()
                 .build()
                 .expect("build tokio runtime in backend thread");
-            if let Err(e) = rt.block_on(run_listen_async(
-                cfg_for_backend,
+            if let Err(e) = rt.block_on(run_backend_async(
+                state_for_backend,
                 model_path_for_backend,
-                overlay_tx,
-                shutdown_for_backend,
+                ui_tx_for_backend,
             )) {
                 tracing::error!(error = %e, "backend exited with error");
             }
         })
         .context("spawning backend thread")?;
 
-    // Run GTK on the OS main thread. The Application's `activate` callback
-    // creates the OverlayWindow and attaches the overlay_rx polling loop.
+    // Run GTK on the OS main thread.
     let app = Application::builder()
         .application_id("com.yetone.VoiceInput")
         .build();
 
-    let overlay_rx_cell = std::cell::RefCell::new(Some(overlay_rx));
+    let state_for_activate = state.clone();
+    let ui_rx_cell = std::cell::RefCell::new(Some(ui_rx));
     app.connect_activate(move |app| {
         let window = OverlayWindow::new(app);
-        // Hidden until backend sends Show.
         window.hide();
 
-        // Take the receiver into a long-lived poll loop.
-        let rx = overlay_rx_cell
+        // Tracks the live Settings window (None when closed; Some when open).
+        // Single-threaded GTK context, so RefCell is fine.
+        let settings_window: std::rc::Rc<std::cell::RefCell<Option<gtk4::ApplicationWindow>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+
+        let rx = ui_rx_cell
             .borrow_mut()
             .take()
             .expect("activate called once");
         let window_for_loop = window;
         let app_for_loop = app.clone();
+        let state_for_loop = state_for_activate.clone();
+        let settings_for_loop = settings_window.clone();
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
             loop {
                 match rx.try_recv() {
@@ -185,17 +151,32 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
                     Ok(UiCmd::Hide) => window_for_loop.hide(),
                     Ok(UiCmd::SetLevel(level)) => window_for_loop.set_level(level),
                     Ok(UiCmd::SetText(text)) => window_for_loop.set_text(&text),
+                    Ok(UiCmd::OpenSettings) => {
+                        let already_open = settings_for_loop.borrow().is_some();
+                        if already_open {
+                            if let Some(win) = settings_for_loop.borrow().as_ref() {
+                                win.present();
+                            }
+                        } else {
+                            let win = voice_input::settings_window::build_window(
+                                &app_for_loop,
+                                &state_for_loop,
+                            );
+                            let cell_for_close = settings_for_loop.clone();
+                            win.connect_close_request(move |_| {
+                                *cell_for_close.borrow_mut() = None;
+                                gtk4::glib::Propagation::Proceed
+                            });
+                            win.present();
+                            *settings_for_loop.borrow_mut() = Some(win);
+                        }
+                    }
                     Ok(UiCmd::Quit) => {
                         app_for_loop.quit();
                         return gtk4::glib::ControlFlow::Break;
                     }
-                    Ok(UiCmd::OpenSettings) => {
-                        // TODO(Phase 5.6): Open the Settings dialog.
-                        tracing::debug!("OpenSettings received (handler pending)");
-                    }
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        // Backend thread died without sending Quit — clean up.
                         app_for_loop.quit();
                         return gtk4::glib::ControlFlow::Break;
                     }
@@ -205,29 +186,14 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
         });
     });
 
-    // Cross-thread Ctrl+C handler: notify the backend and ask the GTK main
-    // loop to quit via UiCmd::Quit (the polling closure on the main
-    // thread calls app.quit() — we can't capture `Application` here because
-    // it's !Send). g_application also installs its own SIGINT handler inside
-    // app.run_*; whichever handler ultimately fires, the post-run
-    // notify_waiters below is a belt-and-suspenders that guarantees the
-    // backend winds down too.
-    let shutdown_for_signal = shutdown.clone();
+    let shutdown_for_signal = state.shutdown.clone();
     let _ = ctrlc::set_handler(move || {
         shutdown_for_signal.notify_waiters();
-        let _ = overlay_tx_for_signal.send(UiCmd::Quit);
+        let _ = ui_tx_for_signal.send(UiCmd::Quit);
     });
 
-    // GApplication argv parsing tries to treat our clap subcommand (`listen`)
-    // as a file path and emits a GLib-GIO CRITICAL when HANDLES_OPEN isn't
-    // set, which also suppresses the `activate` signal. Pass empty args so
-    // GApplication just calls `activate` and we control its lifecycle.
     let exit_code = app.run_with_args::<&str>(&[]);
-
-    // GTK exited (Ctrl+C handled by GLib, or our handler called app.quit, or
-    // some normal exit path). Notify the backend so it stops waiting on
-    // portal events, then join it.
-    shutdown.notify_waiters();
+    state.shutdown.notify_waiters();
     let _ = backend.join();
 
     if exit_code.get() != 0 {
@@ -236,15 +202,21 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_listen_async(
-    cfg: Config,
+async fn run_backend_async(
+    state: voice_input::state::AppState,
     model_path: std::path::PathBuf,
     overlay_tx: overlay::UiSender,
-    shutdown: Arc<Notify>,
 ) -> anyhow::Result<()> {
     use futures_util::stream::StreamExt;
+    use ksni::TrayMethods;
     use voice_input::hotkey::HotkeyHandle;
     use voice_input::speech;
+    use voice_input::tray::VoiceInputTray;
+
+    // Spawn the tray inside this tokio runtime.
+    let tray = VoiceInputTray::new(state.clone(), overlay_tx.clone());
+    let _tray_handle = tray.spawn().await.context("spawning tray")?;
+    tracing::info!("tray spawned");
 
     let hotkey = HotkeyHandle::create()
         .await
@@ -253,13 +225,13 @@ async fn run_listen_async(
     let mut deactivated = hotkey.deactivated().await.context("deactivated stream")?;
 
     tracing::info!(
-        "listen mode running — hold the bound shortcut to dictate; press Ctrl+C to exit"
+        "app running — hold the bound shortcut to dictate (when Enabled); Ctrl+C to exit"
     );
 
     let mut current_pipeline: Option<speech::PipelineHandle> = None;
     let mut current_capture: Option<voice_input::audio::Capture> = None;
-    let language_hint = cfg.language_hint.clone();
-    let refiner = voice_input::refiner::LlmRefiner::from_config(&cfg);
+    let mut refiner =
+        voice_input::refiner::LlmRefiner::from_config(&state.snapshot());
     tracing::info!(active = refiner.is_active(), "llm refiner initialized");
 
     // RMS level fan-out: vad-resample thread → blocking task → overlay channel.
@@ -281,16 +253,25 @@ async fn run_listen_async(
     loop {
         tokio::select! {
             biased;
-            _ = shutdown.notified() => {
-                tracing::info!("shutdown signaled; exiting listen mode");
+            _ = state.shutdown.notified() => {
+                tracing::info!("shutdown signaled; exiting app");
                 break;
+            }
+            _ = state.config_changed.notified() => {
+                refiner = voice_input::refiner::LlmRefiner::from_config(&state.snapshot());
+                tracing::info!(active = refiner.is_active(), "llm refiner rebuilt from updated config");
             }
             Some(_activated) = activated.next() => {
                 if current_pipeline.is_some() {
                     continue;
                 }
+                let snap = state.snapshot();
+                if !snap.enabled {
+                    tracing::info!("shortcut pressed but Enabled=false; ignoring");
+                    continue;
+                }
                 tracing::info!("shortcut pressed; starting pipeline");
-                match speech::start_pipeline(&model_path, language_hint.clone(), Some(level_tx.clone())) {
+                match speech::start_pipeline(&model_path, snap.language_hint.clone(), Some(level_tx.clone())) {
                     Ok((capture, p)) => {
                         let _ = overlay_tx.send(UiCmd::Show);
                         current_capture = Some(capture);
