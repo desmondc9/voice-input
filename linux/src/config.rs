@@ -64,6 +64,27 @@ impl Config {
         std::fs::write(path, content)?;
         Ok(())
     }
+
+    /// Resolve the whisper model file path:
+    /// 1. `$VOICE_INPUT_MODEL_PATH` env var if set
+    /// 2. `whisper_model_path` field if `Some`
+    /// 3. `~/.local/share/voice-input/models/ggml-{whisper_model_size}.bin`
+    pub fn resolve_model_path(&self) -> AppResult<PathBuf> {
+        if let Ok(env) = std::env::var("VOICE_INPUT_MODEL_PATH") {
+            if !env.is_empty() {
+                return Ok(PathBuf::from(env));
+            }
+        }
+        if let Some(ref p) = self.whisper_model_path {
+            return Ok(p.clone());
+        }
+        let dirs = directories::ProjectDirs::from("com", "yetone", "voice-input")
+            .ok_or_else(|| AppError::Config("cannot resolve XDG data dir".into()))?;
+        Ok(dirs
+            .data_dir()
+            .join("models")
+            .join(format!("ggml-{}.bin", self.whisper_model_size)))
+    }
 }
 
 #[cfg(test)]

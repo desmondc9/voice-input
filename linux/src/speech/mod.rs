@@ -6,3 +6,4 @@
 //! we don't have to rewrite it then.
 
 pub mod vad;
+pub mod worker;

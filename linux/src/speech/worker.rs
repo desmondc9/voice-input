@@ -1,0 +1,154 @@
+use std::path::Path;
+use std::thread::{self, JoinHandle};
+
+use crossbeam_channel::{Receiver, Sender};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+use crate::error::{AppError, AppResult};
+
+/// Spawn a worker thread that owns a WhisperContext and transcribes audio
+/// slices arriving on `slices_rx`, emitting `String` segments on `text_tx`.
+/// Returns a `JoinHandle` so the caller can join on shutdown.
+///
+/// On error during initialization, returns immediately. Errors during
+/// per-slice inference are logged and skipped — the worker keeps running.
+pub fn spawn(
+    model_path: &Path,
+    language_hint: String,
+    slices_rx: Receiver<Vec<f32>>,
+    text_tx: Sender<String>,
+) -> AppResult<JoinHandle<()>> {
+    if !model_path.exists() {
+        return Err(AppError::ModelMissing {
+            path: model_path.to_path_buf(),
+        });
+    }
+    let model_path_string = model_path.to_string_lossy().into_owned();
+
+    let ctx = WhisperContext::new_with_params(&model_path_string, WhisperContextParameters::default())
+        .map_err(|e| AppError::WhisperFailed(format!("load model {}: {}", model_path_string, e)))?;
+
+    let handle = thread::Builder::new()
+        .name("whisper-worker".into())
+        .spawn(move || run(ctx, language_hint, slices_rx, text_tx))
+        .map_err(|e| AppError::WhisperFailed(format!("spawn worker thread: {}", e)))?;
+
+    Ok(handle)
+}
+
+fn run(
+    ctx: WhisperContext,
+    language_hint: String,
+    slices_rx: Receiver<Vec<f32>>,
+    text_tx: Sender<String>,
+) {
+    let mut state = match ctx.create_state() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "whisper create_state failed; worker exiting");
+            return;
+        }
+    };
+
+    while let Ok(slice) = slices_rx.recv() {
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        if !language_hint.is_empty() {
+            params.set_language(Some(&language_hint));
+        }
+        params.set_print_progress(false);
+        params.set_print_special(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+
+        if let Err(e) = state.full(params, &slice) {
+            tracing::warn!(error = %e, samples = slice.len(), "whisper inference failed; skipping slice");
+            continue;
+        }
+
+        let n_segments = match state.full_n_segments() {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(error = %e, "full_n_segments failed");
+                continue;
+            }
+        };
+
+        let mut combined = String::new();
+        for i in 0..n_segments {
+            match state.full_get_segment_text(i) {
+                Ok(text) => {
+                    if !combined.is_empty() {
+                        combined.push(' ');
+                    }
+                    combined.push_str(text.trim());
+                }
+                Err(e) => tracing::warn!(error = %e, segment = i, "get_segment_text failed"),
+            }
+        }
+        let trimmed = combined.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if text_tx.send(trimmed).is_err() {
+            tracing::info!("whisper worker: text channel closed, exiting");
+            return;
+        }
+    }
+    tracing::info!("whisper worker: slice channel closed, exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn missing_model_path_returns_model_missing_error() {
+        let (_, slices_rx) = crossbeam_channel::bounded(1);
+        let (text_tx, _) = crossbeam_channel::bounded(1);
+        let path = PathBuf::from("/nonexistent/ggml-tiny.bin");
+        let err = spawn(&path, "zh".into(), slices_rx, text_tx).unwrap_err();
+        match err {
+            AppError::ModelMissing { path: p } => assert!(p.to_string_lossy().contains("nonexistent")),
+            other => panic!("expected ModelMissing, got {:?}", other),
+        }
+    }
+
+    /// Real inference test — requires a downloaded whisper model.
+    /// Run with: cargo test --lib -- --ignored
+    #[test]
+    #[ignore]
+    fn transcribes_silence_to_empty_or_short_text() {
+        let model_path = std::env::var("VOICE_INPUT_MODEL_PATH")
+            .or_else(|_| {
+                Ok::<_, std::env::VarError>(
+                    dirs_for_test()
+                        .join("ggml-tiny.bin")
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            })
+            .unwrap();
+        let path = PathBuf::from(&model_path);
+        if !path.exists() {
+            eprintln!("skipping: model not at {}", model_path);
+            return;
+        }
+        let (slices_tx, slices_rx) = crossbeam_channel::bounded(1);
+        let (text_tx, text_rx) = crossbeam_channel::bounded(1);
+        let handle = spawn(&path, "en".into(), slices_rx, text_tx).unwrap();
+
+        let silence = vec![0.0_f32; 16_000 * 3];
+        slices_tx.send(silence).unwrap();
+
+        let _ = text_rx.recv_timeout(std::time::Duration::from_secs(30));
+        drop(slices_tx);
+        handle.join().unwrap();
+    }
+
+    fn dirs_for_test() -> PathBuf {
+        directories::ProjectDirs::from("com", "yetone", "voice-input")
+            .map(|d| d.data_dir().join("models"))
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+    }
+}
