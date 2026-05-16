@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 use voice_input::{
     cli::{Cli, Command},
     config::Config,
-    overlay::{self, OverlayCmd, OverlayWindow},
+    overlay::{self, UiCmd, OverlayWindow},
     tray::VoiceInputTray,
 };
 
@@ -177,13 +177,17 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
             loop {
                 match rx.try_recv() {
-                    Ok(OverlayCmd::Show) => window_for_loop.show(),
-                    Ok(OverlayCmd::Hide) => window_for_loop.hide(),
-                    Ok(OverlayCmd::SetLevel(level)) => window_for_loop.set_level(level),
-                    Ok(OverlayCmd::SetText(text)) => window_for_loop.set_text(&text),
-                    Ok(OverlayCmd::Quit) => {
+                    Ok(UiCmd::Show) => window_for_loop.show(),
+                    Ok(UiCmd::Hide) => window_for_loop.hide(),
+                    Ok(UiCmd::SetLevel(level)) => window_for_loop.set_level(level),
+                    Ok(UiCmd::SetText(text)) => window_for_loop.set_text(&text),
+                    Ok(UiCmd::Quit) => {
                         app_for_loop.quit();
                         return gtk4::glib::ControlFlow::Break;
+                    }
+                    Ok(UiCmd::OpenSettings) => {
+                        // TODO(Phase 5.6): Open the Settings dialog.
+                        tracing::debug!("OpenSettings received (handler pending)");
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -198,7 +202,7 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
     });
 
     // Cross-thread Ctrl+C handler: notify the backend and ask the GTK main
-    // loop to quit via OverlayCmd::Quit (the polling closure on the main
+    // loop to quit via UiCmd::Quit (the polling closure on the main
     // thread calls app.quit() — we can't capture `Application` here because
     // it's !Send). g_application also installs its own SIGINT handler inside
     // app.run_*; whichever handler ultimately fires, the post-run
@@ -207,7 +211,7 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
     let shutdown_for_signal = shutdown.clone();
     let _ = ctrlc::set_handler(move || {
         shutdown_for_signal.notify_waiters();
-        let _ = overlay_tx_for_signal.send(OverlayCmd::Quit);
+        let _ = overlay_tx_for_signal.send(UiCmd::Quit);
     });
 
     // GApplication argv parsing tries to treat our clap subcommand (`listen`)
@@ -231,7 +235,7 @@ fn run_listen(cfg: Config) -> anyhow::Result<()> {
 async fn run_listen_async(
     cfg: Config,
     model_path: std::path::PathBuf,
-    overlay_tx: overlay::OverlaySender,
+    overlay_tx: overlay::UiSender,
     shutdown: Arc<Notify>,
 ) -> anyhow::Result<()> {
     use futures_util::stream::StreamExt;
@@ -262,7 +266,7 @@ async fn run_listen_async(
         while let Ok(level) = level_rx.recv() {
             // Stop forwarding when the overlay channel is closed.
             if overlay_tx_for_levels
-                .send(OverlayCmd::SetLevel(level))
+                .send(UiCmd::SetLevel(level))
                 .is_err()
             {
                 break;
@@ -284,7 +288,7 @@ async fn run_listen_async(
                 tracing::info!("shortcut pressed; starting pipeline");
                 match speech::start_pipeline(&model_path, language_hint.clone(), Some(level_tx.clone())) {
                     Ok((capture, p)) => {
-                        let _ = overlay_tx.send(OverlayCmd::Show);
+                        let _ = overlay_tx.send(UiCmd::Show);
                         current_capture = Some(capture);
                         current_pipeline = Some(p);
                     }
@@ -305,7 +309,7 @@ async fn run_listen_async(
                         // Refine before paste. The refiner short-circuits when
                         // disabled/unconfigured; on errors it logs and returns the
                         // raw text — paste must not fail because the LLM is down.
-                        let _ = overlay_tx.send(OverlayCmd::SetText("Refining…".into()));
+                        let _ = overlay_tx.send(UiCmd::SetText("Refining…".into()));
                         let to_paste = refiner.refine(&raw_joined, false).await;
                         tracing::info!(
                             segments = segments.len(),
@@ -323,7 +327,7 @@ async fn run_listen_async(
                             tracing::error!(error = %e, "paste failed");
                         }
                     }
-                    let _ = overlay_tx.send(OverlayCmd::Hide);
+                    let _ = overlay_tx.send(UiCmd::Hide);
                 }
             }
             else => {
@@ -334,7 +338,7 @@ async fn run_listen_async(
     }
 
     // Tell the GTK main loop to quit so the process exits cleanly.
-    let _ = overlay_tx.send(OverlayCmd::Hide);
-    let _ = overlay_tx.send(OverlayCmd::Quit);
+    let _ = overlay_tx.send(UiCmd::Hide);
+    let _ = overlay_tx.send(UiCmd::Quit);
     Ok(())
 }
