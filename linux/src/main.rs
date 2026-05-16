@@ -108,9 +108,84 @@ fn run_transcribe(cfg: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_listen(_cfg: Config) -> anyhow::Result<()> {
-    // Implemented in Task 2.5. For now, just print a placeholder so the CLI
-    // dispatch is testable end-to-end.
-    println!("listen subcommand: hotkey + paste wiring not yet implemented (Task 2.5)");
+fn run_listen(cfg: Config) -> anyhow::Result<()> {
+    let model_path = cfg.resolve_model_path().context("resolving whisper model path")?;
+    tracing::info!(model = %model_path.display(), "starting listen mode");
+
+    voice_input::injector::verify_available()
+        .context("ydotool must be installed and ydotoold running")?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+
+    runtime.block_on(run_listen_async(cfg, model_path))
+}
+
+async fn run_listen_async(cfg: Config, model_path: std::path::PathBuf) -> anyhow::Result<()> {
+    use futures_util::stream::StreamExt;
+    use voice_input::hotkey::HotkeyHandle;
+    use voice_input::speech;
+
+    let hotkey = HotkeyHandle::create()
+        .await
+        .context("creating portal global-shortcuts session")?;
+    let mut activated = hotkey.activated().await.context("activated stream")?;
+    let mut deactivated = hotkey.deactivated().await.context("deactivated stream")?;
+
+    tracing::info!(
+        "listen mode running — hold the bound shortcut to dictate; press Ctrl+C to exit"
+    );
+
+    let mut current_pipeline: Option<speech::PipelineHandle> = None;
+    let language_hint = cfg.language_hint.clone();
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("SIGINT received; exiting listen mode");
+                break;
+            }
+            Some(_activated) = activated.next() => {
+                if current_pipeline.is_some() {
+                    // The portal occasionally double-emits activated; ignore if already recording.
+                    continue;
+                }
+                tracing::info!("shortcut pressed; starting pipeline");
+                match speech::start_pipeline(&model_path, language_hint.clone()) {
+                    Ok(p) => current_pipeline = Some(p),
+                    Err(e) => tracing::error!(error = %e, "failed to start pipeline"),
+                }
+            }
+            Some(_deactivated) = deactivated.next() => {
+                if let Some(pipeline) = current_pipeline.take() {
+                    tracing::info!("shortcut released; draining and pasting");
+                    let segments = pipeline.drain_and_join();
+                    let joined = segments.join(" ").trim().to_string();
+                    if joined.is_empty() {
+                        tracing::info!("no segments transcribed; skipping paste");
+                    } else {
+                        tracing::info!(segments = segments.len(), bytes = joined.len(), "pasting");
+                        let injected = tokio::task::spawn_blocking({
+                            let joined = joined.clone();
+                            move || voice_input::injector::inject_text(&joined)
+                        })
+                        .await
+                        .context("ydotool paste task")?;
+                        if let Err(e) = injected {
+                            tracing::error!(error = %e, "paste failed");
+                        }
+                    }
+                }
+            }
+            else => {
+                tracing::warn!("portal streams closed; exiting");
+                break;
+            }
+        }
+    }
+
     Ok(())
 }

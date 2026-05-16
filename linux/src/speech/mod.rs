@@ -85,7 +85,7 @@ impl Drop for PipelineHandle {
 pub fn start_pipeline(model_path: &Path, language_hint: String) -> AppResult<PipelineHandle> {
     let (audio_tx, audio_rx) = bounded::<AudioChunk>(64);
     let (slice_tx, slice_rx) = bounded::<Vec<f32>>(8);
-    let (text_tx, text_rx) = bounded::<String>(8);
+    let (text_tx, text_rx) = bounded::<String>(64);
 
     let capture = Capture::start(audio_tx)?;
     let input_rate = capture.sample_rate;
