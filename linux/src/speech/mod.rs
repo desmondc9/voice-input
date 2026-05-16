@@ -42,6 +42,27 @@ impl PipelineHandle {
     ///    whisper worker's `slices_rx.recv()` return Err.
     /// 4. Join the whisper worker thread.
     pub fn join(mut self) {
+        self.shutdown_internal();
+    }
+
+    /// Shut down (same as `join`), then drain any remaining segments from
+    /// `text_rx`. Returns the buffered segments in arrival order.
+    ///
+    /// Phase 2 uses this after a hotkey release to capture the final
+    /// segments before pasting.
+    pub fn drain_and_join(mut self) -> Vec<String> {
+        self.shutdown_internal();
+        // After both worker threads have joined, all senders for text_tx
+        // have been dropped. The remaining items in text_rx are exactly
+        // the segments produced before shutdown.
+        let mut out = Vec::new();
+        while let Ok(seg) = self.text_rx.try_recv() {
+            out.push(seg);
+        }
+        out
+    }
+
+    fn shutdown_internal(&mut self) {
         drop(self.capture.take());
         if let Some(h) = self.vad_handle.take() {
             let _ = h.join();
@@ -49,6 +70,13 @@ impl PipelineHandle {
         if let Some(h) = self.whisper_handle.take() {
             let _ = h.join();
         }
+    }
+}
+
+impl Drop for PipelineHandle {
+    fn drop(&mut self) {
+        // Idempotent because shutdown_internal uses Option::take.
+        self.shutdown_internal();
     }
 }
 
