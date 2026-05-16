@@ -9,22 +9,20 @@ use wl_clipboard_rs::paste::{
 
 use crate::error::{AppError, AppResult};
 
-/// Verify that `ydotool` is invocable and `ydotoold` is running. Called
-/// once at startup of `listen` mode so the user gets a clear error
-/// instead of a silent paste failure later.
+/// Verify that `ydotool` is invocable. Called once at startup of `listen`
+/// mode so the user gets a clear error if the binary is missing.
+///
+/// `ydotool` (no args) prints its usage banner and exits 0 on supported
+/// versions; we only need to confirm the spawn succeeded (binary on PATH).
+/// We do NOT probe `ydotoold` here — if the daemon is down, the first
+/// paste attempt fails with a clear error.
 pub fn verify_available() -> AppResult<()> {
     let output = Command::new("ydotool")
-        .arg("--version")
         .output()
-        .map_err(|e| AppError::YdotoolMissing(format!("`ydotool --version` failed: {e}")))?;
-    if !output.status.success() {
-        return Err(AppError::YdotoolMissing(format!(
-            "ydotool exited with status {}; install via scripts/install-ydotool.sh",
-            output.status
-        )));
-    }
+        .map_err(|e| AppError::YdotoolMissing(format!("ydotool not found on PATH: {e}")))?;
+    let banner = String::from_utf8_lossy(&output.stdout);
     tracing::info!(
-        version = %String::from_utf8_lossy(&output.stdout).trim(),
+        banner = %banner.lines().next().unwrap_or("<empty>"),
         "ydotool available"
     );
     Ok(())
