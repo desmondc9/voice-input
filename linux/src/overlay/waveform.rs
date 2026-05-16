@@ -14,7 +14,6 @@ use gtk4::{glib, DrawingArea};
 /// - ±4% per-bar jitter for organic feel
 /// - `MIN_BAR_FRACTION = 0.15` so silent bars stay visible
 /// - Bar width 4.5 px, gap 3.5 px, view 44×32 px
-
 const BAR_COUNT: usize = 5;
 const BAR_WEIGHTS: [f64; BAR_COUNT] = [0.5, 0.8, 1.0, 0.75, 0.55];
 const MIN_BAR_FRACTION: f64 = 0.15;
@@ -33,6 +32,12 @@ pub struct WaveformView {
     drawing_area: DrawingArea,
     smoothed_level: Rc<Cell<f64>>,
     target_level: Rc<Cell<f64>>,
+}
+
+impl Default for WaveformView {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WaveformView {
@@ -103,8 +108,7 @@ fn draw_bars(ctx: &Context, width: f64, height: f64, level: f64) {
     // Bar color: rgba(255, 255, 255, 0.92).
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.92);
 
-    for i in 0..BAR_COUNT {
-        let weight = BAR_WEIGHTS[i];
+    for (i, &weight) in BAR_WEIGHTS.iter().enumerate() {
         // Cheap jitter — using a hash of (i, level) keeps it stable per
         // frame so bars don't flicker chaotically. Real impl could use
         // a per-bar rng. ±4% per the macOS constant.
