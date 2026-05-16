@@ -10,8 +10,6 @@ use voice_input::{
     tray::VoiceInputTray,
 };
 
-use crossbeam_channel;
-
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(

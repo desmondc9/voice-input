@@ -227,7 +227,7 @@ mod tests {
             .collect();
         let level = rms_normalized(&quiet);
         assert!(
-            level >= 0.0 && level < 0.2,
+            (0.0..0.2).contains(&level),
             "expected low range, got {}",
             level
         );
