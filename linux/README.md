@@ -2,7 +2,7 @@
 
 Wayland-native voice input for KDE Plasma 6, sway, and hyprland. Hold a configured key, speak, release — the transcript is pasted into the focused application.
 
-> Status: **Phase 3** — overlay capsule with live waveform appears during dictation. Tray (default), transcribe CLI (Phase 1), and listen mode (Phase 2) all still work.
+> Status: **Phase 4** — optional LLM refinement of transcripts before paste (OpenAI-compatible APIs). Overlay (Phase 3), tray, transcribe CLI, and listen mode all still work.
 
 > **Phase 3 GNOME note**: the overlay uses `wlr-layer-shell`, which GNOME's mutter does NOT implement. `voice-input listen` will fail to position the capsule correctly on GNOME — explicitly out of scope.
 
@@ -83,6 +83,21 @@ Requires `wlr-layer-shell` support in your compositor:
 - **KDE Plasma 6**: works (KWin 6+ supports it).
 - **sway / hyprland**: works.
 - **GNOME**: not supported — mutter does not implement layer-shell.
+
+### LLM refinement (Phase 4)
+
+Optionally pass the raw transcript through an OpenAI-compatible chat completion before pasting. The system prompt is intentionally conservative — it fixes ASR errors (`配森 → Python`, `杰森 → JSON`, etc.) but does NOT rewrite or polish the text. If the API is unreachable, paste falls back to the raw transcript.
+
+Configure via `~/.config/voice-input/config.toml`:
+
+~~~toml
+llm_enabled = true
+llm_api_base_url = "https://api.openai.com/v1"
+llm_api_key = "sk-..."
+llm_model = "gpt-4o-mini"
+~~~
+
+The `llm_api_base_url` accepts any OpenAI-compatible endpoint (vLLM, llama.cpp server, Together, Groq, etc.). The 10 s request timeout matches the macOS app. A future Settings UI (Phase 5) will replace manual TOML editing.
 
 ## Compositor support
 
