@@ -48,14 +48,18 @@ fn run_tray(_cfg: Config) -> anyhow::Result<()> {
 }
 
 async fn run_tray_async() -> anyhow::Result<()> {
-    let shutdown = Arc::new(Notify::new());
-    let tray = VoiceInputTray::new(shutdown.clone());
+    // Interim: superseded by run_app in Task 5.9. Constructs a synthetic
+    // AppState from Config::default() (no listen loop reads it here) and a
+    // detached UiSender (no GTK receiver in standalone tray mode).
+    let state = voice_input::state::AppState::new(Config::default());
+    let (ui_tx, _ui_rx) = voice_input::overlay::channel();
+    let tray = VoiceInputTray::new(state.clone(), ui_tx);
     let _tray_handle = tray.spawn().await.context("spawning tray")?;
 
-    tracing::info!("voice-input running — Quit via tray icon or Ctrl+C");
+    tracing::info!("voice-input tray running — Quit via tray or Ctrl+C");
 
     tokio::select! {
-        _ = shutdown.notified() => tracing::info!("tray Quit received"),
+        _ = state.shutdown.notified() => tracing::info!("tray Quit received"),
         _ = tokio::signal::ctrl_c() => tracing::info!("SIGINT received"),
     }
 
