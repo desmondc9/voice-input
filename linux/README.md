@@ -2,7 +2,7 @@
 
 Wayland-native voice input for KDE Plasma 6, sway, and hyprland. Hold a configured key, speak, release — the transcript is pasted into the focused application.
 
-> Status: **Phase 6** — tray icon now reflects pipeline state (`media-record-symbolic` while dictating, `audio-input-microphone` idle), matching the macOS `mic`/`mic.fill` parity. Phase 5 features (Settings dialog, Enabled / Language / LLM Refinement submenus, unified default mode) remain. Headless `transcribe` CLI still works.
+> Status: **Phase 7** — latency polish (persistent whisper + VAD workers, VAD silence cutoff 150 ms) plus XDG autostart installer. Phase 6 recording icon, Phase 5 tray menus, headless `transcribe` CLI all unchanged.
 
 > **Phase 3 GNOME note**: the overlay uses `wlr-layer-shell`, which GNOME's mutter does NOT implement. `voice-input listen` will fail to position the capsule correctly on GNOME — explicitly out of scope.
 
@@ -126,6 +126,26 @@ llm_timeout_secs = 30  # optional; default 30. Bump higher for slow cold-starts 
 ~~~
 
 `llm_api_key` can be any non-empty string — Ollama does not validate it, but the refiner short-circuits when the key is empty. Small local models (≤3B) often follow the conservative system prompt loosely; if you see the model rewriting or paraphrasing rather than just fixing ASR errors, try a larger model (7B+) or use a cloud provider for refinement.
+
+### Autostart (Phase 7)
+
+Run once to install a `~/.config/autostart/voice-input.desktop` entry that launches the tray at login:
+
+```bash
+./linux/scripts/install-autostart.sh
+```
+
+The script picks `voice-input` from your `$PATH`, or falls back to `linux/target/release/voice-input`. Pass an explicit path if you want a different binary:
+
+```bash
+./linux/scripts/install-autostart.sh /usr/local/bin/voice-input
+```
+
+Remove with:
+
+```bash
+rm ~/.config/autostart/voice-input.desktop
+```
 
 ## Compositor support
 
