@@ -216,7 +216,7 @@ async fn run_backend_async(
 
     // Spawn the tray inside this tokio runtime.
     let tray = VoiceInputTray::new(state.clone(), overlay_tx.clone());
-    let _tray_handle = tray.spawn().await.context("spawning tray")?;
+    let tray_handle = tray.spawn().await.context("spawning tray")?;
     tracing::info!("tray spawned");
 
     let hotkey = HotkeyHandle::create()
@@ -273,6 +273,11 @@ async fn run_backend_async(
                         let _ = overlay_tx.send(UiCmd::Show);
                         current_capture = Some(capture);
                         current_pipeline = Some(p);
+                        state
+                            .recording
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        tray_handle.update(|_| {}).await;
+                        tracing::info!("tray: icon → recording");
                     }
                     Err(e) => tracing::error!(error = %e, "failed to start pipeline"),
                 }
@@ -281,6 +286,11 @@ async fn run_backend_async(
                 if let Some(pipeline) = current_pipeline.take() {
                     tracing::info!("shortcut released; draining and pasting");
                     drop(current_capture.take());
+                    state
+                        .recording
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    tray_handle.update(|_| {}).await;
+                    tracing::info!("tray: icon → idle");
                     let segments = tokio::task::spawn_blocking(move || pipeline.join_remaining())
                         .await
                         .context("draining pipeline")?;
