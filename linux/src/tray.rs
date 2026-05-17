@@ -3,6 +3,14 @@ use ksni::{menu::CheckmarkItem, menu::StandardItem, MenuItem, Tray};
 use crate::overlay::{UiCmd, UiSender};
 use crate::state::AppState;
 
+/// Tray icon when no pipeline is active. Standard freedesktop icon name
+/// present in Adwaita / Breeze / Yaru / Papirus.
+pub(crate) const IDLE_ICON: &str = "audio-input-microphone";
+
+/// Tray icon while a pipeline is active. The "red dot" record indicator —
+/// universally rendered in red across mainstream icon themes.
+pub(crate) const RECORDING_ICON: &str = "media-record-symbolic";
+
 /// KSNI tray for VoiceInput — main user-facing UI besides the overlay.
 ///
 /// Menu structure (matches macOS AppDelegate.swift:175-234):
@@ -32,14 +40,22 @@ impl Tray for VoiceInputTray {
     }
 
     fn icon_name(&self) -> String {
-        "audio-input-microphone".into()
+        if self
+            .state
+            .recording
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            RECORDING_ICON.into()
+        } else {
+            IDLE_ICON.into()
+        }
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
             title: "VoiceInput".into(),
             description: "Hold the configured key to dictate".into(),
-            icon_name: "audio-input-microphone".into(),
+            icon_name: IDLE_ICON.into(),
             icon_pixmap: Vec::new(),
         }
     }
@@ -161,4 +177,31 @@ fn llm_menu(llm_enabled: bool) -> MenuItem<VoiceInputTray> {
         ..Default::default()
     }
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::overlay;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn icon_reflects_recording_state() {
+        let state = crate::state::AppState::new(Config::default());
+        let (ui_tx, _ui_rx) = overlay::channel();
+        let tray = VoiceInputTray::new(state.clone(), ui_tx);
+
+        assert_eq!(tray.icon_name(), IDLE_ICON, "idle by default");
+
+        state.recording.store(true, Ordering::Release);
+        assert_eq!(
+            tray.icon_name(),
+            RECORDING_ICON,
+            "recording flag flips icon"
+        );
+
+        state.recording.store(false, Ordering::Release);
+        assert_eq!(tray.icon_name(), IDLE_ICON, "flag clears back to idle");
+    }
 }
