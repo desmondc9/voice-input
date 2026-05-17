@@ -10,9 +10,12 @@ pub const VAD_SAMPLE_RATE: u32 = 16_000;
 /// at 16 kHz with 512-sample windows (= 32 ms).
 const VAD_WINDOW: usize = 512;
 
-/// How many trailing-silence windows close a segment (≥300 ms).
-/// 300 ms / 32 ms ≈ 10 windows.
-const SILENCE_WINDOWS_TO_CLOSE: usize = 10;
+/// How many trailing-silence windows close a segment (≈150 ms).
+/// 150 ms / 32 ms ≈ 5 windows. Tuned in Phase 7 from 10 (≈300 ms) to
+/// reduce the post-release pause; the cost is more aggressive
+/// mid-sentence splits, which is acceptable for hold-to-talk dictation
+/// where the speaker is expected to talk in short utterances.
+const SILENCE_WINDOWS_TO_CLOSE: usize = 5;
 
 /// Max segment length in samples (30 s at 16 kHz = whisper's context window).
 const MAX_SEGMENT_SAMPLES: usize = 30 * VAD_SAMPLE_RATE as usize;
