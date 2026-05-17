@@ -30,7 +30,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 voice_activity_detector = "0.2"
-whisper-rs = "0.14"
+whisper-rs = { version = "0.14", features = ["cuda"] }
 wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
