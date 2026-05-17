@@ -15,10 +15,11 @@
 pub mod vad;
 pub mod worker;
 
-use std::path::Path;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{bounded, Receiver};
+use whisper_rs::WhisperContext;
 
 use crate::audio::{AudioChunk, Capture, Resampler16kMono};
 use crate::error::{AppError, AppResult};
@@ -86,7 +87,7 @@ impl Drop for PipelineHandle {
 /// are forwarded via `try_send` (levels are lossy; dropped if the consumer
 /// is slow).
 pub fn start_pipeline(
-    model_path: &Path,
+    whisper_ctx: Arc<WhisperContext>,
     language_hint: String,
     level_tx: Option<crossbeam_channel::Sender<f32>>,
 ) -> AppResult<(Capture, PipelineHandle)> {
@@ -105,7 +106,7 @@ pub fn start_pipeline(
         })
         .map_err(|e| AppError::Config(format!("spawn vad thread: {}", e)))?;
 
-    let whisper_handle = worker::spawn(model_path, language_hint, slice_rx, text_tx)?;
+    let whisper_handle = worker::spawn(whisper_ctx, language_hint, slice_rx, text_tx)?;
 
     let handle = PipelineHandle {
         text_rx,

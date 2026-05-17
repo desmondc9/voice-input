@@ -10,8 +10,8 @@
 //! (resilient to panics in holders), no `PoisonError` to thread through
 //! `?`. API identical for our usage.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use tokio::sync::Notify;

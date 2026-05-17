@@ -38,8 +38,14 @@ fn run_transcribe(cfg: Config) -> anyhow::Result<()> {
         .context("resolving whisper model path")?;
     tracing::info!(model = %model_path.display(), "starting transcribe pipeline");
 
+    let whisper_ctx = std::sync::Arc::new(
+        voice_input::speech::worker::load_whisper_context(&model_path)
+            .context("loading whisper model")?,
+    );
+    tracing::info!("whisper model loaded");
+
     let (_capture, pipeline) =
-        voice_input::speech::start_pipeline(&model_path, cfg.language_hint.clone(), None)
+        voice_input::speech::start_pipeline(whisper_ctx, cfg.language_hint.clone(), None)
             .context("starting speech pipeline")?;
 
     tracing::info!("listening — speak into the default mic; press Ctrl+C to stop");
@@ -219,6 +225,13 @@ async fn run_backend_async(
     let tray_handle = tray.spawn().await.context("spawning tray")?;
     tracing::info!("tray spawned");
 
+    // Load whisper once and share via Arc across all dictations — saves the
+    // ~1.5–2 s model-load cost that would otherwise be paid per pipeline.
+    let whisper_ctx = std::sync::Arc::new(
+        speech::worker::load_whisper_context(&model_path).context("loading whisper model")?,
+    );
+    tracing::info!("whisper model loaded");
+
     let hotkey = HotkeyHandle::create()
         .await
         .context("creating portal global-shortcuts session")?;
@@ -268,7 +281,7 @@ async fn run_backend_async(
                     continue;
                 }
                 tracing::info!("shortcut pressed; starting pipeline");
-                match speech::start_pipeline(&model_path, snap.language_hint.clone(), Some(level_tx.clone())) {
+                match speech::start_pipeline(std::sync::Arc::clone(&whisper_ctx), snap.language_hint.clone(), Some(level_tx.clone())) {
                     Ok((capture, p)) => {
                         let _ = overlay_tx.send(UiCmd::Show);
                         current_capture = Some(capture);

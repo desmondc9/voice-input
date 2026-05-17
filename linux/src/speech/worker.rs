@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender};
@@ -6,31 +7,36 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::error::{AppError, AppResult};
 
-/// Spawn a worker thread that owns a WhisperContext and transcribes audio
-/// slices arriving on `slices_rx`, emitting `String` segments on `text_tx`.
-/// Returns a `JoinHandle` so the caller can join on shutdown.
-///
-/// On error during initialization, returns immediately. Errors during
-/// per-slice inference are logged and skipped — the worker keeps running.
-pub fn spawn(
-    model_path: &Path,
-    language_hint: String,
-    slices_rx: Receiver<Vec<f32>>,
-    text_tx: Sender<String>,
-) -> AppResult<JoinHandle<()>> {
+/// Load a whisper model from disk into a `WhisperContext`. Expensive
+/// (487 MB read + parse for `small`); call once and share via `Arc` so
+/// successive dictations don't pay this cost again.
+pub fn load_whisper_context(model_path: &Path) -> AppResult<WhisperContext> {
     if !model_path.exists() {
         return Err(AppError::ModelMissing {
             path: model_path.to_path_buf(),
         });
     }
-    let model_path_string = model_path.to_string_lossy().into_owned();
+    let path_str = model_path.to_string_lossy().into_owned();
+    WhisperContext::new_with_params(&path_str, WhisperContextParameters::default())
+        .map_err(|e| AppError::WhisperFailed(format!("load model {}: {}", path_str, e)))
+}
 
-    let ctx =
-        WhisperContext::new_with_params(&model_path_string, WhisperContextParameters::default())
-            .map_err(|e| {
-                AppError::WhisperFailed(format!("load model {}: {}", model_path_string, e))
-            })?;
-
+/// Spawn a worker thread that uses a pre-loaded `WhisperContext` to
+/// transcribe audio slices arriving on `slices_rx`, emitting `String`
+/// segments on `text_tx`. Returns a `JoinHandle` so the caller can join
+/// on shutdown.
+///
+/// `ctx` is shared via `Arc` — multiple successive pipelines reuse the
+/// same loaded model. Per-inference state is created inside the worker.
+///
+/// Errors during per-slice inference are logged and skipped — the worker
+/// keeps running.
+pub fn spawn(
+    ctx: Arc<WhisperContext>,
+    language_hint: String,
+    slices_rx: Receiver<Vec<f32>>,
+    text_tx: Sender<String>,
+) -> AppResult<JoinHandle<()>> {
     let handle = thread::Builder::new()
         .name("whisper-worker".into())
         .spawn(move || run(ctx, language_hint, slices_rx, text_tx))
@@ -40,7 +46,7 @@ pub fn spawn(
 }
 
 fn run(
-    ctx: WhisperContext,
+    ctx: Arc<WhisperContext>,
     language_hint: String,
     slices_rx: Receiver<Vec<f32>>,
     text_tx: Sender<String>,
@@ -107,15 +113,13 @@ mod tests {
 
     #[test]
     fn missing_model_path_returns_model_missing_error() {
-        let (_, slices_rx) = crossbeam_channel::bounded(1);
-        let (text_tx, _) = crossbeam_channel::bounded(1);
         let path = PathBuf::from("/nonexistent/ggml-tiny.bin");
-        let err = spawn(&path, "zh".into(), slices_rx, text_tx).unwrap_err();
-        match err {
-            AppError::ModelMissing { path: p } => {
+        match load_whisper_context(&path) {
+            Err(AppError::ModelMissing { path: p }) => {
                 assert!(p.to_string_lossy().contains("nonexistent"))
             }
-            other => panic!("expected ModelMissing, got {:?}", other),
+            Err(other) => panic!("expected ModelMissing, got {:?}", other),
+            Ok(_) => panic!("expected ModelMissing error, got Ok(WhisperContext)"),
         }
     }
 
@@ -139,9 +143,10 @@ mod tests {
             eprintln!("skipping: model not at {}", model_path);
             return;
         }
+        let ctx = Arc::new(load_whisper_context(&path).unwrap());
         let (slices_tx, slices_rx) = crossbeam_channel::bounded(1);
         let (text_tx, text_rx) = crossbeam_channel::bounded(1);
-        let handle = spawn(&path, "en".into(), slices_rx, text_tx).unwrap();
+        let handle = spawn(ctx, "en".into(), slices_rx, text_tx).unwrap();
 
         let silence = vec![0.0_f32; 16_000 * 3];
         slices_tx.send(silence).unwrap();
