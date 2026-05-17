@@ -46,9 +46,19 @@ fn run_transcribe(cfg: Config) -> anyhow::Result<()> {
         .context("spawning persistent whisper worker")?;
     tracing::info!("whisper model loaded");
 
-    let (_capture, pipeline) =
-        voice_input::speech::start_pipeline(&whisper_worker, cfg.language_hint.clone(), None)
-            .context("starting speech pipeline")?;
+    let vad_detector = std::sync::Arc::new(std::sync::Mutex::new(
+        voice_input::speech::vad::VadSlicer::build_detector()
+            .context("building shared VAD detector")?,
+    ));
+    tracing::info!("vad detector ready");
+
+    let (_capture, pipeline) = voice_input::speech::start_pipeline(
+        &whisper_worker,
+        std::sync::Arc::clone(&vad_detector),
+        cfg.language_hint.clone(),
+        None,
+    )
+    .context("starting speech pipeline")?;
 
     tracing::info!("listening — speak into the default mic; press Ctrl+C to stop");
 
@@ -235,6 +245,13 @@ async fn run_backend_async(
     .context("spawning persistent whisper worker")?;
     tracing::info!("whisper model loaded");
 
+    // Build the Silero ONNX detector once and share it across dictations via
+    // Arc<Mutex>. Each dictation resets the LSTM state via VadSlicer::new_with_detector.
+    let vad_detector = std::sync::Arc::new(std::sync::Mutex::new(
+        speech::vad::VadSlicer::build_detector().context("building shared VAD detector")?,
+    ));
+    tracing::info!("vad detector ready");
+
     let hotkey = HotkeyHandle::create()
         .await
         .context("creating portal global-shortcuts session")?;
@@ -284,7 +301,12 @@ async fn run_backend_async(
                     continue;
                 }
                 tracing::info!("shortcut pressed; starting pipeline");
-                match speech::start_pipeline(&whisper_worker, snap.language_hint.clone(), Some(level_tx.clone())) {
+                match speech::start_pipeline(
+                    &whisper_worker,
+                    std::sync::Arc::clone(&vad_detector),
+                    snap.language_hint.clone(),
+                    Some(level_tx.clone()),
+                ) {
                     Ok((capture, p)) => {
                         let _ = overlay_tx.send(UiCmd::Show);
                         current_capture = Some(capture);

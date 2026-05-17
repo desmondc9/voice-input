@@ -1,4 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use voice_input::speech::vad::{VadSlicer, VAD_SAMPLE_RATE};
+
+fn make_slicer() -> VadSlicer {
+    let detector = Arc::new(Mutex::new(VadSlicer::build_detector().unwrap()));
+    VadSlicer::new_with_detector(detector)
+}
 
 /// Generate a real-ish speech waveform: superimposed harmonics with envelope.
 /// Silero is trained on actual speech; a pure sine won't reliably trigger
@@ -22,7 +29,7 @@ fn silence(duration_ms: usize) -> Vec<f32> {
 
 #[test]
 fn long_silence_produces_no_segments() {
-    let mut v = VadSlicer::new().unwrap();
+    let mut v = make_slicer();
     let segments = v.push(&silence(3000)).unwrap();
     assert!(
         segments.is_empty(),
@@ -33,14 +40,14 @@ fn long_silence_produces_no_segments() {
 
 #[test]
 fn flush_returns_none_after_silence_only() {
-    let mut v = VadSlicer::new().unwrap();
+    let mut v = make_slicer();
     let _ = v.push(&silence(2000)).unwrap();
     assert!(v.flush().is_none());
 }
 
 #[test]
 fn fake_speech_then_silence_produces_at_least_one_segment_or_flush_yields_one() {
-    let mut v = VadSlicer::new().unwrap();
+    let mut v = make_slicer();
     let speech = fake_speech(1500);
     let trailing = silence(500);
     let segs1 = v.push(&speech).unwrap();

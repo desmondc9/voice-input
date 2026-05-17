@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use voice_activity_detector::VoiceActivityDetector;
 
 use crate::error::{AppError, AppResult};
@@ -27,7 +29,11 @@ const SPEECH_THRESHOLD: f32 = 0.5;
 /// any segments that closed during this batch. On shutdown, call `flush`
 /// to retrieve any in-progress segment.
 pub struct VadSlicer {
-    vad: VoiceActivityDetector,
+    /// Heavy ONNX-backed detector, shared across dictations and reset
+    /// between them. Held under a `Mutex` because Silero's `predict()`
+    /// is `&mut self` (LSTM state mutates per call) but only one
+    /// dictation is active at a time, so contention is impossible.
+    detector: Arc<Mutex<VoiceActivityDetector>>,
     /// Samples buffered for the next VAD window inference.
     window_buf: Vec<f32>,
     /// Samples accumulated in the current speech segment.
@@ -39,19 +45,29 @@ pub struct VadSlicer {
 }
 
 impl VadSlicer {
-    pub fn new() -> AppResult<Self> {
-        let vad = VoiceActivityDetector::builder()
+    /// Build a brand-new Silero ONNX detector. Heavy (creates the ONNX
+    /// session). Use this once at app startup and share via `Arc<Mutex>`
+    /// across many dictations.
+    pub fn build_detector() -> AppResult<VoiceActivityDetector> {
+        VoiceActivityDetector::builder()
             .sample_rate(VAD_SAMPLE_RATE as i64)
             .chunk_size(VAD_WINDOW)
             .build()
-            .map_err(|e| AppError::WhisperFailed(format!("vad init: {}", e)))?;
-        Ok(Self {
-            vad,
+            .map_err(|e| AppError::WhisperFailed(format!("vad init: {}", e)))
+    }
+
+    /// Create a per-dictation slicer that shares the given pre-built
+    /// detector. Resets the detector's LSTM hidden state so the new
+    /// dictation starts clean (no leak from the previous one's tail).
+    pub fn new_with_detector(detector: Arc<Mutex<VoiceActivityDetector>>) -> Self {
+        detector.lock().unwrap().reset();
+        Self {
+            detector,
             window_buf: Vec::with_capacity(VAD_WINDOW),
             segment: Vec::with_capacity(MAX_SEGMENT_SAMPLES),
             silence_count: 0,
             in_segment: false,
-        })
+        }
     }
 
     /// Push samples and return any completed segments.
@@ -60,7 +76,11 @@ impl VadSlicer {
         for &s in samples {
             self.window_buf.push(s);
             if self.window_buf.len() >= VAD_WINDOW {
-                let prob = self.vad.predict(self.window_buf.iter().copied());
+                let prob = self
+                    .detector
+                    .lock()
+                    .unwrap()
+                    .predict(self.window_buf.iter().copied());
                 let is_speech = prob >= SPEECH_THRESHOLD;
 
                 if is_speech {
@@ -125,14 +145,19 @@ mod tests {
         }
     }
 
+    fn make_slicer() -> VadSlicer {
+        let detector = Arc::new(Mutex::new(VadSlicer::build_detector().unwrap()));
+        VadSlicer::new_with_detector(detector)
+    }
+
     #[test]
     fn instantiates_without_error() {
-        let _v = VadSlicer::new().expect("init");
+        let _v = make_slicer();
     }
 
     #[test]
     fn pure_silence_yields_no_segments() {
-        let mut v = VadSlicer::new().unwrap();
+        let mut v = make_slicer();
         let silence = samples_for(2000, false);
         let segments = v.push(&silence).unwrap();
         assert!(segments.is_empty(), "silence produced segments");
@@ -140,7 +165,7 @@ mod tests {
 
     #[test]
     fn flush_returns_none_when_idle() {
-        let mut v = VadSlicer::new().unwrap();
+        let mut v = make_slicer();
         assert!(v.flush().is_none());
     }
 
@@ -148,7 +173,7 @@ mod tests {
     fn long_silence_beyond_max_segment_yields_no_segments() {
         // Regression test: pre-fix, 30+ seconds of pure silence would trigger
         // MAX_SEGMENT_SAMPLES closure and emit a silent segment to whisper.
-        let mut v = VadSlicer::new().unwrap();
+        let mut v = make_slicer();
         let silence = samples_for(35_000, false);
         let segments = v.push(&silence).unwrap();
         assert!(

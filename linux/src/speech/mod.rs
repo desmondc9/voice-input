@@ -83,6 +83,9 @@ impl Drop for PipelineHandle {
 /// is slow).
 pub fn start_pipeline(
     whisper_worker: &worker::PersistentWhisperWorker,
+    vad_detector: std::sync::Arc<
+        std::sync::Mutex<voice_activity_detector::VoiceActivityDetector>,
+    >,
     language_hint: String,
     level_tx: Option<crossbeam_channel::Sender<f32>>,
 ) -> AppResult<(Capture, PipelineHandle)> {
@@ -97,7 +100,14 @@ pub fn start_pipeline(
     let vad_handle = std::thread::Builder::new()
         .name("vad-resample".into())
         .spawn(move || {
-            run_vad_resample(audio_rx, slice_tx, input_rate, input_channels, level_tx);
+            run_vad_resample(
+                audio_rx,
+                slice_tx,
+                input_rate,
+                input_channels,
+                level_tx,
+                vad_detector,
+            );
         })
         .map_err(|e| AppError::Config(format!("spawn vad thread: {}", e)))?;
 
@@ -118,6 +128,9 @@ fn run_vad_resample(
     input_rate: u32,
     input_channels: u16,
     level_tx: Option<crossbeam_channel::Sender<f32>>,
+    vad_detector: std::sync::Arc<
+        std::sync::Mutex<voice_activity_detector::VoiceActivityDetector>,
+    >,
 ) {
     let mut resampler = match Resampler16kMono::new(input_rate, input_channels) {
         Ok(r) => r,
@@ -126,13 +139,7 @@ fn run_vad_resample(
             return;
         }
     };
-    let mut slicer = match vad::VadSlicer::new() {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "vad init failed");
-            return;
-        }
-    };
+    let mut slicer = vad::VadSlicer::new_with_detector(vad_detector);
 
     while let Ok(chunk) = audio_rx.recv() {
         // Fan out the RMS level to the overlay if subscribed.
