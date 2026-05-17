@@ -153,10 +153,12 @@ fn run_app(cfg: Config) -> anyhow::Result<()> {
                     Ok(UiCmd::OpenSettings) => {
                         let already_open = settings_for_loop.borrow().is_some();
                         if already_open {
+                            tracing::info!("ui: re-presenting existing Settings window");
                             if let Some(win) = settings_for_loop.borrow().as_ref() {
                                 win.present();
                             }
                         } else {
+                            tracing::info!("ui: building Settings window");
                             let win = voice_input::settings_window::build_window(
                                 &app_for_loop,
                                 &state_for_loop,

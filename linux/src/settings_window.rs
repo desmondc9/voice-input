@@ -121,9 +121,13 @@ pub fn build_window(app: &Application, state: &AppState) -> ApplicationWindow {
 
     // Test: builds a one-shot LlmRefiner from the CURRENT field values
     // (NOT the persisted Config) and calls try_refine(force=true) so the
-    // refiner's enabled/configured guard is bypassed. Runs async via
-    // glib::MainContext::spawn_local so the UI stays responsive during
-    // the HTTP round-trip.
+    // refiner's enabled/configured guard is bypassed.
+    //
+    // reqwest's async runtime is tokio — the GLib MainContext can't drive
+    // it (the original spawn_local implementation hung forever). We run
+    // the HTTP call on a dedicated std thread with its own single-threaded
+    // tokio runtime, ship the result back over a crossbeam channel, and
+    // let GTK poll for completion via glib::timeout_add_local.
     {
         let status_label = status_label.clone();
         let url_entry = url_entry.clone();
@@ -143,18 +147,46 @@ pub fn build_window(app: &Application, state: &AppState) -> ApplicationWindow {
             status_label.set_text("Testing…");
             apply_status_color(&status_label, StatusKind::Muted);
 
-            // Synthesize a Config that mirrors the entered fields so the
-            // refiner reads them without us having to call AppState::update.
             let mut probe_cfg = snapshot.clone();
             probe_cfg.llm_api_base_url = url;
             probe_cfg.llm_api_key = key;
             probe_cfg.llm_model = model;
+            let timeout_secs = probe_cfg.llm_timeout_secs;
             let refiner = crate::refiner::LlmRefiner::from_config(&probe_cfg);
 
+            let (tx, rx) = crossbeam_channel::bounded::<crate::error::AppResult<String>>(1);
+
+            std::thread::Builder::new()
+                .name("voice-input-test-refine".into())
+                .spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("build tokio runtime for Test button");
+                    // Hard timeout = client timeout + small buffer; protects
+                    // against any path that bypasses the reqwest timeout.
+                    let result = rt.block_on(async {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(timeout_secs + 5),
+                            refiner.try_refine("Hello, this is a test.", true),
+                        )
+                        .await
+                        {
+                            Ok(r) => r,
+                            Err(_) => Err(crate::error::AppError::NetworkError(format!(
+                                "test request exceeded {}s hard timeout",
+                                timeout_secs + 5
+                            ))),
+                        }
+                    });
+                    let _ = tx.send(result);
+                })
+                .expect("spawn test thread");
+
             let status_label = status_label.clone();
-            gtk4::glib::MainContext::default().spawn_local(async move {
-                match refiner.try_refine("Hello, this is a test.", true).await {
-                    Ok(text) => {
+            gtk4::glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+                match rx.try_recv() {
+                    Ok(Ok(text)) => {
                         let truncated = if text.chars().count() > 200 {
                             let prefix: String = text.chars().take(200).collect();
                             format!("{}…", prefix)
@@ -163,10 +195,20 @@ pub fn build_window(app: &Application, state: &AppState) -> ApplicationWindow {
                         };
                         status_label.set_text(&format!("OK: {}", truncated));
                         apply_status_color(&status_label, StatusKind::Success);
+                        gtk4::glib::ControlFlow::Break
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         status_label.set_text(&e.to_string());
                         apply_status_color(&status_label, StatusKind::Error);
+                        gtk4::glib::ControlFlow::Break
+                    }
+                    Err(crossbeam_channel::TryRecvError::Empty) => {
+                        gtk4::glib::ControlFlow::Continue
+                    }
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        status_label.set_text("Test thread exited unexpectedly");
+                        apply_status_color(&status_label, StatusKind::Error);
+                        gtk4::glib::ControlFlow::Break
                     }
                 }
             });
