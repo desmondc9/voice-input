@@ -15,8 +15,6 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - name: Install build deps
         run: |
           sudo apt-get update
@@ -38,8 +36,6 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85"
       - name: Install build deps (incl. CUDA toolkit)
         run: |
           sudo apt-get update
