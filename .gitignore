@@ -1,0 +1,11 @@
+# Cargo build output
+target/
+
+# Built Debian packages
+*.deb
+
+# Local test / scratch files
+input_test.txt
+
+# Claude Code local state
+.claude/
