@@ -61,7 +61,7 @@ Tray menu for runtime config; optional LLM refinement via any
 OpenAI-compatible endpoint."""
 section = "utility"
 priority = "optional"
-depends = "libc6, libgtk-4-1, libwayland-client0, libxkbcommon0, libasound2, ydotool"
+depends = "libc6, libgtk-4-1, libgtk4-layer-shell0, libwayland-client0, libxkbcommon0, libasound2, ydotool"
 recommends = "ydotool-daemon"
 assets = [
     ["target/release/voice-input", "usr/bin/", "755"],
@@ -74,5 +74,5 @@ assets = [
 name = "voice-input-cuda"
 conflicts = "voice-input"
 provides = "voice-input"
-depends = "libc6, libgtk-4-1, libwayland-client0, libxkbcommon0, libasound2, ydotool, libcudart12 | libcudart11, libcublas12 | libcublas11"
+depends = "libc6, libgtk-4-1, libgtk4-layer-shell0, libwayland-client0, libxkbcommon0, libasound2, ydotool, libcudart12 | libcudart11, libcublas12 | libcublas11"
 features = ["cuda"]
