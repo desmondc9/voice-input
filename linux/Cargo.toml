@@ -7,6 +7,10 @@ authors = ["Desmond Chen"]
 license = "MIT"
 description = "Wayland-native voice input — hold-to-talk speech-to-text"
 
+[features]
+default = []
+cuda = ["whisper-rs/cuda"]
+
 [dependencies]
 anyhow = "1"
 ashpd = { version = "0.13", features = ["global_shortcuts"] }
@@ -30,7 +34,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 voice_activity_detector = "0.2"
-whisper-rs = { version = "0.14", features = ["cuda"] }
+whisper-rs = "0.14"
 wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
