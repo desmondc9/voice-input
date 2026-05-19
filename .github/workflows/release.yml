@@ -30,12 +30,11 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
       - name: Build CPU .deb
-        working-directory: linux
         run: cargo deb
       - uses: actions/upload-artifact@v4
         with:
           name: deb-cpu
-          path: linux/target/debian/voice-input_*.deb
+          path: target/debian/voice-input_*.deb
 
   build-cuda:
     runs-on: ubuntu-24.04
@@ -59,7 +58,6 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
       - name: Build CUDA .deb
-        working-directory: linux
         # whisper.cpp defaults CMAKE_CUDA_ARCHITECTURES=native; on a GPU-less
         # CI runner that falls back to nvcc's ancient default (sm_52, Maxwell),
         # producing a binary that crashes on any modern card with
@@ -72,7 +70,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: deb-cuda
-          path: linux/target/debian/voice-input-cuda_*.deb
+          path: target/debian/voice-input-cuda_*.deb
 
   release:
     needs: [build-cpu, build-cuda]
