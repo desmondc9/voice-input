@@ -2,21 +2,21 @@
 
 Wayland-native voice input for KDE Plasma 6, sway, and hyprland. Hold a configured key, speak, release — the transcript is pasted into the focused application.
 
-> Status: **v0.1.0 released** — first Linux release. Download the [latest `.deb`](https://github.com/desmondc9/voice-input-src/releases/latest), or build from source (instructions below).
+> Status: **v0.1.0 released** — first Linux release. Download the [latest `.deb`](https://github.com/desmondc9/voice-input/releases/latest), or build from source (instructions below).
 
 > **Phase 3 GNOME note**: the overlay uses `wlr-layer-shell`, which GNOME's mutter does NOT implement. `voice-input listen` will fail to position the capsule correctly on GNOME — explicitly out of scope.
 
 ## Install
 
-**Recommended:** download the latest `.deb` from the [GitHub Releases page](https://github.com/desmondc9/voice-input-src/releases/latest) and install with `apt`.
+**Recommended:** download the latest `.deb` from the [GitHub Releases page](https://github.com/desmondc9/voice-input/releases/latest) and install with `apt`.
 
 ```bash
 # CPU build (any Linux, no GPU required):
-wget https://github.com/desmondc9/voice-input-src/releases/download/v0.1.0/voice-input_0.1.0_amd64.deb
+wget https://github.com/desmondc9/voice-input/releases/download/v0.1.0/voice-input_0.1.0_amd64.deb
 sudo apt install ./voice-input_0.1.0_amd64.deb
 
 # NVIDIA GPU users — faster transcription via CUDA:
-wget https://github.com/desmondc9/voice-input-src/releases/download/v0.1.0/voice-input-cuda_0.1.0_amd64.deb
+wget https://github.com/desmondc9/voice-input/releases/download/v0.1.0/voice-input-cuda_0.1.0_amd64.deb
 sudo apt install ./voice-input-cuda_0.1.0_amd64.deb
 ```
 

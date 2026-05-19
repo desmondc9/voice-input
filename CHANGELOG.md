@@ -61,4 +61,4 @@ First publishable Linux release. All Phase 0–7 features present.
 - Whisper models, the `ydotoold` daemon, and the portal global-shortcut
   binding are user-installed steps, not bundled in the `.deb`.
 
-[0.1.0]: https://github.com/desmondc9/voice-input-src/releases/tag/v0.1.0
+[0.1.0]: https://github.com/desmondc9/voice-input/releases/tag/v0.1.0

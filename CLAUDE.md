@@ -93,4 +93,4 @@ Per-file responsibilities (`src/`):
    git push origin vX.Y.Z
    ```
 4. `.github/workflows/release.yml` builds CPU and CUDA `.deb` variants in parallel (CUDA takes ~30 min for 5 archs) and attaches both to the GitHub Release.
-5. Verify both `voice-input_X.Y.Z_amd64.deb` and `voice-input-cuda_X.Y.Z_amd64.deb` are attached at `https://github.com/desmondc9/voice-input-src/releases/tag/vX.Y.Z`.
+5. Verify both `voice-input_X.Y.Z_amd64.deb` and `voice-input-cuda_X.Y.Z_amd64.deb` are attached at `https://github.com/desmondc9/voice-input/releases/tag/vX.Y.Z`.
