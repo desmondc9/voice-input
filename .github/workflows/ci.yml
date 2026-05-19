@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel in-progress runs when a new push lands on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt + clippy + test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev libwayland-dev libxkbcommon-dev \
+            cmake clang libclang-dev libasound2-dev \
+            meson ninja-build pkg-config
+
+      - name: Build gtk4-layer-shell from source
+        # Ubuntu 24.04 does not ship libgtk4-layer-shell-dev; build the same
+        # v1.3.0 source release used by the release workflow.
+        run: |
+          git clone --depth 1 --branch v1.3.0 https://github.com/wmww/gtk4-layer-shell.git /tmp/gtk4-layer-shell
+          cd /tmp/gtk4-layer-shell
+          meson setup build --buildtype=release --prefix=/usr \
+            -Dexamples=false -Ddocs=false -Dtests=false \
+            -Dintrospection=false -Dvapi=false
+          meson compile -C build
+          sudo meson install -C build
+          sudo ldconfig
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        # `-D warnings` turns every warning into an error. Local clippy is
+        # currently clean; if a future change adds warnings, fix them or
+        # justify them with #[allow(...)] at the call site.
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --all
