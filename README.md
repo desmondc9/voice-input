@@ -36,7 +36,26 @@ Requires Rust 1.83+, `cmake`, `libclang`, and `cc`/`gcc`. On first build, whispe
 cargo build --release
 ```
 
-System packages (Debian/Ubuntu): `sudo apt install cmake clang libclang-dev libasound2-dev`.
+System packages (Debian/Ubuntu):
+
+```bash
+sudo apt install cmake clang libclang-dev libgtk-4-dev libgtk4-layer-shell-dev \
+                 libwayland-dev libxkbcommon-dev libasound2-dev pkg-config
+```
+
+On Ubuntu 24.04 LTS (Noble), `libgtk4-layer-shell-dev` is not in the default repos — build it from source instead:
+
+```bash
+sudo apt install meson ninja-build
+git clone --depth 1 --branch v1.3.0 https://github.com/wmww/gtk4-layer-shell.git
+cd gtk4-layer-shell
+meson setup build --buildtype=release --prefix=/usr \
+  -Dexamples=false -Ddocs=false -Dtests=false -Dintrospection=false -Dvapi=false
+meson compile -C build
+sudo meson install -C build && sudo ldconfig
+```
+
+Newer distros (Ubuntu 25.04+, Debian trixie+, Fedora 41+) ship `gtk4-layer-shell` 1.x directly — install `libgtk4-layer-shell-dev` (or the equivalent) from the package manager instead.
 
 ### Optional: CUDA acceleration
 
