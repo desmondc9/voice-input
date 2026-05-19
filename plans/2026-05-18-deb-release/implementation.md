@@ -8,7 +8,7 @@
 
 **Tech Stack:** Cargo features (existing), [`cargo-deb`](https://crates.io/crates/cargo-deb) for `.deb` generation, GitHub Actions (`dtolnay/rust-toolchain`, `softprops/action-gh-release`), Keep a Changelog format.
 
-**Reference spec:** `plans/2026-05-18-deb-release/deb-release.md`
+**Reference spec:** `plans/2026-05-18-deb-release/design.md`
 
 ---
 

@@ -259,7 +259,7 @@ voice-input &!
 
 ## Project layout
 
-See `plans/2026-05-15-voice-input-linux/voice-input-linux.md` for the full design and `plans/2026-05-15-voice-input-linux/implementations/` for per-phase implementation plans (Phase 0 through Phase 7).
+See `plans/2026-05-15-voice-input-linux/design.md` for the full design and `plans/2026-05-15-voice-input-linux/implementations/` for per-phase implementation plans (Phase 0 through Phase 7).
 
 ## Credits
 

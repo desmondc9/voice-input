@@ -11,7 +11,7 @@ const CAPSULE_MARGIN_BOTTOM: i32 = 56;
 /// CSS applied to the overlay capsule. Linux-native styling: solid dark
 /// alpha background, soft inner border, drop shadow. No blur — that would
 /// require compositor-specific protocols (KWin blur effect) and isn't
-/// portable. See brainstorm decision in plans/voice-input-linux.md.
+/// portable. See brainstorm decision in plans/2026-05-15-voice-input-linux/design.md.
 const CAPSULE_CSS: &str = r#"
 window.voice-input-overlay {
     background: transparent;
