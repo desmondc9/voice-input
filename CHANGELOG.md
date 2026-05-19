@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Pre-1.0: API, CLI surface, and config schema may change without notice between
 minor versions.
 
+## [0.1.1] - 2026-05-19
+
+### Fixed
+
+- **CUDA `.deb` crashed on every modern NVIDIA GPU.** The CI release build
+  left `CMAKE_CUDA_ARCHITECTURES` unset, so whisper.cpp's default of `native`
+  fell back to `sm_52` (Maxwell, GTX 9xx era) on the GPU-less runner.
+  Inference aborted on Turing+ cards with
+  `CUDA kernel mul_mat_vec has no device code compatible with CUDA arch N`,
+  followed by `cublasGemmStridedBatchedEx` failing. The CUDA `.deb` now
+  ships fat device code for Turing (75), Ampere (80, 86), Ada (89), and
+  Hopper (90), covering T4, RTX 20/30/40 series, A100, and H100.
+- Local CPU builds were unaffected; local CUDA builds were unaffected because
+  `native` correctly detects the local GPU.
+
 ## [0.1.0] - 2026-05-18
 
 First publishable Linux release. All Phase 0–7 features present.

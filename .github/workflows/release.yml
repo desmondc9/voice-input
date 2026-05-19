@@ -60,6 +60,14 @@ jobs:
         run: cargo install cargo-deb --locked
       - name: Build CUDA .deb
         working-directory: linux
+        # whisper.cpp defaults CMAKE_CUDA_ARCHITECTURES=native; on a GPU-less
+        # CI runner that falls back to nvcc's ancient default (sm_52, Maxwell),
+        # producing a binary that crashes on any modern card with
+        # `CUDA kernel mul_mat_vec has no device code compatible with CUDA arch N`.
+        # Target a fat list covering Turing -> Hopper so the .deb runs on every
+        # relevant NVIDIA GPU (T4, RTX 20/30/40 series, A100, H100).
+        env:
+          CMAKE_CUDA_ARCHITECTURES: "75;80;86;89;90"
         run: cargo deb --variant cuda
       - uses: actions/upload-artifact@v4
         with:
