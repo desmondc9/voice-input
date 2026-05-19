@@ -9,3 +9,8 @@ input_test.txt
 
 # Claude Code local state
 .claude/
+
+# Editor / OS junk
+*.swp
+*.bak
+.DS_Store
