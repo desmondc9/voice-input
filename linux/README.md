@@ -181,6 +181,70 @@ Remove with:
 rm ~/.config/autostart/voice-input.desktop
 ```
 
+### Do NOT wrap voice-input in a systemd `--user` service
+
+It looks tempting to run `voice-input` as a `systemctl --user` service so you get `journalctl --user -u voice-input -f` and supervised restarts. **It does not work on KDE Plasma 6.** The global-shortcuts portal will reject the session and you'll see:
+
+```
+ERROR voice_input: backend exited with error error=creating portal global-shortcuts session
+```
+
+with **nothing** in `journalctl --user -u plasma-xdg-desktop-portal-kde` — the request never makes it to the KDE backend.
+
+Why: KDE's xdg-desktop-portal identifies the calling app by walking the caller's cgroup path looking for a Plasma-launch scope (`/.../app.slice/app-<app_id>-<PID>.scope`). A systemd `.service` unit produces a cgroup like `/.../app.slice/voice-input.service` instead, which carries no recoverable `app_id` for KDE's matcher. `xdg-desktop-portal` then refuses `CreateSession` outright. Renaming the unit to `app-com.yetone.VoiceInput.service`, or launching via `systemd-run --user --scope --unit=app-com.yetone.VoiceInput-XXX`, also fails — KDE expects the exact Plasma launch pattern.
+
+Use the XDG autostart entry above. That's the supported path. KDE launches it inside a proper `app-com.yetone.VoiceInput-<PID>.scope` and the portal sees the correct `app_id`.
+
+### Don't write a custom `ydotoold.service` — use the packaged `ydotool.service`
+
+The `ydotool` Debian package ships `/usr/lib/systemd/user/ydotool.service` (unit name: `ydotool`, **not** `ydotoold`) and enables it by default. It owns `/run/user/$UID/.ydotool_socket`.
+
+If you also create a custom `~/.config/systemd/user/ydotoold.service`, the two units race for the same socket. The custom one will spam:
+
+```
+error: Another ydotoold is running with the same socket.
+```
+
+restart 100+ times, eventually leaving an **orphan `ydotoold` process** (`PPID = systemd --user`, but not tracked by any unit) that systemd won't clean up. Symptoms: `systemctl --user status ydotoold` says inactive, but `pgrep ydotoold` finds a running process, and `systemctl --user stop ydotool` doesn't help because that's a different unit.
+
+Cleanup:
+
+```bash
+# Remove the custom unit (if you created one)
+systemctl --user disable --now ydotoold.service
+rm -f ~/.config/systemd/user/ydotoold.service ~/.config/systemd/user/default.target.wants/ydotoold.service
+systemctl --user daemon-reload
+
+# Kill any orphan ydotoold and stale socket
+pkill -9 ydotoold
+rm -f /run/user/$UID/.ydotool_socket
+
+# Let the packaged unit take over
+systemctl --user restart ydotool.service
+systemctl --user is-active ydotool.service   # expect: active
+ydotool key 56:1 56:0                         # smoke test — no error means it works
+```
+
+### Quick sanity check on first run
+
+```bash
+# 1. ydotool daemon is running and reachable
+systemctl --user is-active ydotool.service
+ydotool key 56:1 56:0
+
+# 2. You're in the `input` group (re-login after install-ydotool.sh)
+groups | tr ' ' '\n' | grep -x input
+
+# 3. The whisper model is in place
+ls ~/.local/share/voice-input/models/
+
+# 4. KDE Wayland is in use (Plasma 6 portal works only here)
+echo "$XDG_SESSION_TYPE $XDG_CURRENT_DESKTOP"   # expect: wayland KDE
+
+# 5. Launch from your desktop session (terminal is fine), NOT from systemd
+voice-input &!
+```
+
 ## Compositor support
 
 - **KDE Plasma 6**: target compositor, built-in StatusNotifierItem host. Portal `GlobalShortcuts` works out of the box.
